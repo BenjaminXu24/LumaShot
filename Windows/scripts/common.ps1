@@ -43,16 +43,18 @@ function Resolve-LumaShotInnoCompiler {
     else {
         $taskCandidates = @()
         $taskCommand = Get-Command ISCC.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($taskCommand) { $taskCandidates += $taskCommand.Source }
         foreach ($taskBase in (@(${env:ProgramFiles(x86)}, $env:ProgramFiles, "$env:LOCALAPPDATA/Programs") | Where-Object { $_ })) {
             foreach ($taskMajor in @(6, 7)) { $taskCandidates += Join-Path $taskBase "Inno Setup $taskMajor/ISCC.exe" }
         }
+        # Package-manager PATH entries can be launcher shims with version 0.0.0.0.
+        # Prefer the real compiler so its version can be checked before publishing.
+        if ($taskCommand) { $taskCandidates += $taskCommand.Source }
         $taskCompiler = $taskCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
     }
     if (!$taskCompiler) { throw 'Install Inno Setup 6.3+ or pass -InnoCompiler C:\path\to\ISCC.exe. See Windows/README.md.' }
     $taskVersionText = (Get-Item -LiteralPath $taskCompiler).VersionInfo.FileVersion
     if ($taskVersionText -notmatch '(\d+\.\d+(?:\.\d+)?)' -or [version]$Matches[1] -lt [version]'6.3') {
-        throw "Inno Setup 6.3+ is required. Found: $taskVersionText ($taskCompiler)"
+        throw "Inno Setup 6.3+ is required. Found: $taskVersionText ($taskCompiler). If this is a launcher shim, pass -InnoCompiler with the actual ISCC.exe path."
     }
     $taskCompiler
 }
