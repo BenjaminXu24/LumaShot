@@ -4,6 +4,8 @@
 
 **Windows 版：**[下载 Windows v0.1.0](https://github.com/BenjaminXu24/LumaShot/releases/tag/windows-v0.1.0)，包含区域/窗口/全屏/滚动长截图、标注、复制与保存，提供 x64/ARM64 安装包和免安装包。详见 [Windows 使用与开发说明](Windows/README.md)。以下说明针对 macOS 版。
 
+在另一台 Windows 电脑从源码构建，请按 [Windows 开发与验证](Windows/README.md#开发与验证) 准备 Git、PowerShell 7.2+、.NET 10 SDK，以及打包所需的 Inno Setup 6.3+；仓库已提供环境检查、编译、自动测试和 x64/ARM64 打包脚本。
+
 <details>
 <summary>查看 Windows 版界面</summary>
 
