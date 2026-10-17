@@ -1,0 +1,112 @@
+# 拾光截图 · LumaShot
+
+为 macOS 14 及以上系统开发的原生截图工具，使用 SwiftUI、AppKit 和 ScreenCaptureKit，无第三方运行依赖。
+
+[English](README.md) · [下载 v0.1.0](https://github.com/BenjaminXu24/LumaShot/releases/tag/v0.1.0) · [反馈问题](https://github.com/BenjaminXu24/LumaShot/issues)
+
+![拾光截图主界面](docs/images/home.png)
+
+## 下载
+
+从 [GitHub Releases](https://github.com/BenjaminXu24/LumaShot/releases) 下载 **LumaShot-v0.1.0-macOS-universal.zip**，解压后将 `LumaShot.app` 拖入「应用程序」。通用包同时支持 Intel 和 Apple Silicon。
+
+Release 附带 `SHA256SUMS.txt`，将它和安装包放在同一目录，运行 `shasum -a 256 -c SHA256SUMS.txt` 即可校验。
+
+这是早期可用版本，当前界面为简体中文。第三方自动滚动、物理多显示器组合仍需更多实际验证；动画、虚拟列表、重复图案或重叠不足可能影响拼接。历史记录保存原图，标注会话不持久化。
+
+## 运行
+
+双击 `build/LumaShot.app`。也可以将应用拖进「应用程序」文件夹。
+
+首次截图时，在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」允许「拾光截图 / LumaShot」。如系统提示重新打开应用，请退出再启动。自动滚动长截图还需要「辅助功能」权限；不授权辅助功能也可以手动滚动拼接。
+
+此版本使用临时签名，尚未经过 Developer ID 签名及 Apple 公证。下载后如被系统拦截，请核对来源后在「系统设置 → 隐私与安全性」选择「仍要打开」，或从源码构建。
+
+## 使用
+
+| 方式 | 全局快捷键 | 操作 |
+| --- | --- | --- |
+| 区域截图 | Control + Shift + 1 | 拖动框选，松开鼠标截图 |
+| 窗口截图 | Control + Shift + 2 | 移动鼠标高亮窗口，点击捕捉 |
+| 全屏截图 | Control + Shift + 3 | 捕捉鼠标所在的显示器 |
+| 滚动长截图 | Control + Shift + 4 | 框选内容区，自动或手动滚动拼接 |
+
+截图会进入标注编辑器。区域/窗口选择时按 Esc 或右键取消。关闭主窗口后应用仍在菜单栏运行，使用菜单栏「退出」或 Command + Q 完全退出。
+
+长截图建议只选择滚动内容，避开不随内容移动的侧栏、播放器和工具栏。自动滚动遇到底部会暂停，点击「完成」进入标注；也可以随时暂停、手动滚动约半屏，然后「添加当前屏」。相邻画面需要保留重叠部分；匹配失败会保留已拼接内容并提示回滚，避免丢失当前结果。支持常见固定页眉/页脚的去重，上限 50,000 像素，并根据图像宽度限制在约 8,000 万总像素以内。动画、视频、虚拟列表、内容变化或整片重复图案可能无法可靠拼接。
+
+## 标注
+
+![标注编辑器，画布为本地生成的练习图](docs/images/editor.png)
+
+支持选择/移动、箭头、矩形、椭圆、画笔、文字、序号、马赛克、画布移动；可选择颜色、线宽，撤销、重做和清除。
+
+- Command + C：复制完整标注图到剪贴板。
+- Command + S：保存 PNG 或 JPEG；默认建议下载文件夹，可自由更改。
+- Command + Z / Command + Shift + Z：撤销 / 重做。
+- Command + 0 / Command + 1：适应窗口 / 100%。
+- V / A / R / O / P / T / N / M / H：快速切换工具。
+- 按住 Shift 绘制正方形、正圆或锁定箭头角度；Option + 拖动可平移。
+- 选中标注后 Delete 删除。
+
+标注按原始图片像素导出，保留 Retina 分辨率。马赛克会直接改变导出图片的像素。
+
+「体验标注」提供本地生成的练习图，不需要屏幕权限。「打开图片」可编辑现有 PNG、JPEG、HEIC、TIFF、WebP，也可以将图片文件通过 Finder 的「打开方式」交给本应用。
+
+## 本地数据
+
+原始截图保存在 `~/Library/Application Support/LumaShot/Captures/`，自动保留最近 100 张。历史记录可按类型筛选、搜索文件名、重新编辑、复制、另存或删除。标注结果需要复制或另存；历史保存的是原始截图，不保存标注会话。应用不联网、不上传图片、不需要账号。
+
+偏好设置可开启自动复制、提示音、截图延时和登录启动，查看权限与快捷键注册冲突。登录启动需从完整 `.app` 运行。
+
+## 开发
+
+要求 Xcode 15+ / Swift 5.9+；推荐当前 Xcode。
+
+```sh
+git clone https://github.com/BenjaminXu24/LumaShot.git
+cd LumaShot
+swift build
+swift test
+./scripts/build.sh
+./scripts/build.sh --universal
+open build/LumaShot.app
+```
+
+`--universal` 构建同时支持 Apple Silicon 与 Intel 的应用；默认构建当前 Mac 架构。Swift Package 可直接由 Xcode 打开。
+
+运行 `./scripts/package-release.sh` 可以生成带版本号的通用 ZIP 和 SHA-256 文件，产物位于 `build/releases/`。打包脚本会检查双架构、签名、许可证和压缩包完整性。
+
+生成无需屏幕录制权限的界面预览：
+
+```sh
+build/LumaShot.app/Contents/MacOS/LumaShot --render-previews build/previews
+```
+
+17 项测试已通过，覆盖长截图像素顺序/固定页眉页脚/重复画面/不相关画面/高度上限、本地图像保存与保留策略、标注像素和渲染方向等。也已通过实际 ScreenCaptureKit 全屏捕捉验证（2880 × 1800，不保存测试屏幕像素），并验证编辑器原生复制/撤销菜单响应。物理多显示器和第三方页面自动滚动尚需在相应权限及设备下验证。
+
+可选真实截图接口检查（不会主动请求权限，也不会保存捕获画面）：
+
+```sh
+swiftc -parse-as-library -swift-version 5 -o build/CaptureSmoke Sources/LumaShot/Models.swift Sources/LumaShot/Capture/*.swift scripts/CaptureSmoke.swift
+build/CaptureSmoke
+```
+
+## 结构
+
+- `Sources/LumaShot/Capture/`：ScreenCaptureKit 捕捉、选择遮罩、滚动控制和图像拼接。
+- `Sources/LumaShot/Editor/`：标注模型、原始像素渲染器、画布及编辑窗口。
+- `Sources/LumaShot/Services/`：Carbon 全局快捷键、本地历史、图像导出。
+- `Sources/LumaShot/`：应用入口、主界面、历史与偏好设置。
+- `Resources/Info.plist`：应用包配置与权限说明。
+- `scripts/build.sh`：生成图标、构建应用、临时签名。
+
+捕捉接口参考 [Apple ScreenCaptureKit 文档](https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager)。
+
+## 参与贡献
+
+欢迎提交问题、滚动兼容性反馈、无障碍改进和 Pull Request。请阅读 [贡献指南](CONTRIBUTING.md) 和 [更新记录](CHANGELOG.md)。应用不发起网络请求、无遥测、不上传图片。
+
+## 许可证
+
+[MIT](LICENSE) · Copyright (c) 2026 BenjaminXu24。

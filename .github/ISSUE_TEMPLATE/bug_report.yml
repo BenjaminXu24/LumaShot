@@ -1,0 +1,29 @@
+name: Bug report / 问题反馈
+description: Report a reproducible problem, including scrolling compatibility.
+labels: [bug]
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment / 使用环境
+      description: macOS version, Intel or Apple Silicon, LumaShot version, displays and scaling, target app/version if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      description: Include the capture mode and permission state. For scrolling, explain automatic or manual mode and the selected area.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual result / 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Sanitized images or logs / 脱敏图片或日志
+      description: Please remove personal or confidential content before attaching files.
