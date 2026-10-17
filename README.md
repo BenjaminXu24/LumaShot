@@ -98,6 +98,8 @@ Open `Package.swift` in Xcode to develop. For a verified universal archive and c
 
 Outputs are written to `build/releases/`. The script verifies both architectures, the ad-hoc signature, the embedded MIT license, and ZIP integrity. It does not perform Developer ID signing or notarization.
 
+For optional Developer ID signing, Apple submission, ticket stapling, and Gatekeeper verification, see [the notarization workflow](docs/NOTARIZATION.md). It requires your own valid Developer ID Application identity and a local Keychain authentication profile.
+
 ## Validation and limitations
 
 The initial development checks passed **17 automated tests** covering exact stitching pixels, fixed headers/footers, sparse content, repeated/unrelated frames, height limits, native image resolution, annotation coordinates, mosaic, undo/redo, and storage retention. Real ScreenCaptureKit display capture was exercised at **2880 × 1800**; captured test screen pixels were discarded. Native editor Copy/Undo routing and background selection-panel keyboard focus were also checked.

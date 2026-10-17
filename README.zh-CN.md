@@ -77,6 +77,8 @@ open build/LumaShot.app
 
 运行 `./scripts/package-release.sh` 可以生成带版本号的通用 ZIP 和 SHA-256 文件，产物位于 `build/releases/`。打包脚本会检查双架构、签名、许可证和压缩包完整性。
 
+正式 Developer ID 签名、提交 Apple 公证、装订票据和 Gatekeeper 验证请参阅[公证流程说明](docs/NOTARIZATION.md)。需要你自己的 Developer ID Application 证书及本机钥匙串认证配置。
+
 生成无需屏幕录制权限的界面预览：
 
 ```sh
