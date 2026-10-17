@@ -30,10 +30,14 @@ The list should contain `Developer ID Application: Your Name (TEAMID)`. No signi
 Run this **in your local Terminal**:
 
 ```sh
-xcrun notarytool store-credentials LumaShot-notary
+xcrun notarytool store-credentials LumaShot-notary \
+  --apple-id "your-developer-account@example.com" \
+  --team-id "YOURTEAMID"
 ```
 
-Follow the secure interactive prompts. One supported route is your developer Apple Account, its team ID, and an **app-specific password** generated in Apple Account settings. Use the same team as the Developer ID certificate. The command validates and stores credentials in Keychain. A supported App Store Connect API key can also be stored using Apple's documented flags.
+Replace the email and team ID with your own developer account and the team used by the Developer ID certificate. Enter an **app-specific password** generated in [Apple Account settings](https://account.apple.com/) at the secure password prompt. The command validates and stores credentials in Keychain.
+
+If you run the command without these flags, the first prompt asks for the **path to an App Store Connect API private key** (`.p8`). For Apple Account authentication, leave that prompt empty and press Return; enter the app-specific password only at the password prompt. A supported API key is an alternative authentication method, not a required extra key.
 
 Do not put passwords, certificate private keys, API `.p8` files, or exported `.p12` files in the repository or chat. No credentials need to be sent to a collaborator for this local workflow.
 
