@@ -46,15 +46,26 @@ function Resolve-LumaShotInnoCompiler {
         foreach ($taskBase in (@(${env:ProgramFiles(x86)}, $env:ProgramFiles, "$env:LOCALAPPDATA/Programs") | Where-Object { $_ })) {
             foreach ($taskMajor in @(6, 7)) { $taskCandidates += Join-Path $taskBase "Inno Setup $taskMajor/ISCC.exe" }
         }
-        # Package-manager PATH entries can be launcher shims with version 0.0.0.0.
-        # Prefer the real compiler so its version can be checked before publishing.
+        # Prefer the real compiler over package-manager launcher shims.
         if ($taskCommand) { $taskCandidates += $taskCommand.Source }
         $taskCompiler = $taskCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
     }
     if (!$taskCompiler) { throw 'Install Inno Setup 6.3+ or pass -InnoCompiler C:\path\to\ISCC.exe. See Windows/README.md.' }
-    $taskVersionText = (Get-Item -LiteralPath $taskCompiler).VersionInfo.FileVersion
-    if ($taskVersionText -notmatch '(\d+\.\d+(?:\.\d+)?)' -or [version]$Matches[1] -lt [version]'6.3') {
-        throw "Inno Setup 6.3+ is required. Found: $taskVersionText ($taskCompiler). If this is a launcher shim, pass -InnoCompiler with the actual ISCC.exe path."
+    # ISCC.exe can report file version 0.0.0.0 even for a current compiler.
+    # Compile a minimal script from stdin with output disabled to query the actual engine.
+    $taskProbeScript = @'
+[Setup]
+AppName=LumaShot compiler check
+AppVersion=0
+CreateAppDir=no
+Uninstallable=no
+'@
+    $taskProbeOutput = $taskProbeScript | & $taskCompiler '/O-' '-' 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "Inno compiler check failed: $taskProbeOutput" }
+    $taskVersionMatch = [regex]::Match($taskProbeOutput, 'Compiler engine version:\s+.*?(\d+\.\d+(?:\.\d+)?)')
+    if (!$taskVersionMatch.Success -or [version]$taskVersionMatch.Groups[1].Value -lt [version]'6.3') {
+        throw "Inno Setup 6.3+ is required. Compiler output: $taskProbeOutput"
     }
+    Write-Host "Inno Setup engine $($taskVersionMatch.Groups[1].Value)"
     $taskCompiler
 }
