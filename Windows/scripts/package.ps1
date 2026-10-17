@@ -14,12 +14,14 @@ $taskRelease = Join-Path $taskRoot 'build/windows-releases'
 New-Item $taskRelease -ItemType Directory -Force | Out-Null
 Invoke-LumaShotDotnet -Arguments @('publish', (Join-Path $taskRoot 'Windows/LumaShot.Windows/LumaShot.Windows.csproj'), '-c', 'Release', '-r', $Runtime, '--self-contained', 'true', '-p:DebugType=None', '-p:DebugSymbols=false', '-o', $taskOutput)
 if (!(Test-Path (Join-Path $taskOutput 'LumaShot.exe')) -or !(Test-Path (Join-Path $taskOutput 'LICENSE.txt'))) { throw 'Publish is missing application or license.' }
-$taskNuget = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path ([Environment]::GetFolderPath('UserProfile')) '.nuget/packages' }
+$taskAssets = Get-Content (Join-Path $taskRoot 'Windows/LumaShot.Windows/obj/project.assets.json') -Raw | ConvertFrom-Json
 foreach ($taskPackage in @("microsoft.netcore.app.runtime.$Runtime", "microsoft.windowsdesktop.app.runtime.$Runtime")) {
-    $taskPackageRoot = Join-Path $taskNuget $taskPackage
-    if (!(Test-Path $taskPackageRoot)) { throw "Runtime license package not found: $taskPackage" }
-    $taskPackageVersion = Get-ChildItem $taskPackageRoot -Directory | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
-    $taskNotices = Get-ChildItem $taskPackageVersion.FullName -File | Where-Object { $_.Name -match '^(LICENSE(\.TXT)?|THIRD-PARTY-NOTICES(\.TXT)?)$' }
+    # Follow the actual restore result, including custom NuGet cache locations and exact runtime versions.
+    $taskLibrary = $taskAssets.libraries.PSObject.Properties | Where-Object { $_.Name.StartsWith("$taskPackage/", [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+    if (!$taskLibrary) { throw "Runtime package missing from restore result: $taskPackage" }
+    $taskPackageDirectory = $taskAssets.packageFolders.PSObject.Properties.Name | ForEach-Object { Join-Path $_ $taskLibrary.Value.path } | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | Select-Object -First 1
+    if (!$taskPackageDirectory) { throw "Runtime license package not found: $($taskLibrary.Name)" }
+    $taskNotices = Get-ChildItem -LiteralPath $taskPackageDirectory -File | Where-Object { $_.Name -match '^(LICENSE(\.TXT)?|THIRD-PARTY-NOTICES(\.TXT)?)$' }
     if (!$taskNotices) { throw "Runtime license notices not found: $taskPackage" }
     $taskNoticeDir = Join-Path $taskOutput "third-party/$taskPackage"
     New-Item $taskNoticeDir -ItemType Directory -Force | Out-Null
