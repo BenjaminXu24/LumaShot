@@ -1,0 +1,105 @@
+name: Publish Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Windows validation run containing the release packages
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: publish-windows
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify and publish tested packages
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TASK_REPOSITORY: ${{ github.repository }}
+          TASK_RUN_ID: ${{ inputs.run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          if ($env:TASK_RUN_ID -notmatch '^\d+$') { throw 'Invalid validation run ID.' }
+          $taskRun = gh api "repos/$env:TASK_REPOSITORY/actions/runs/$env:TASK_RUN_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $taskRun.conclusion -ne 'success' -or $taskRun.head_repository.full_name -ne $env:TASK_REPOSITORY -or $taskRun.path -ne '.github/workflows/windows.yml' -or $taskRun.event -ne 'push' -or $taskRun.head_branch -ne 'main') { throw 'A successful Windows run from this repository is required.' }
+          git merge-base --is-ancestor $taskRun.head_sha HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'The tested source must have been merged into main.' }
+          [xml]$taskProps = Get-Content Windows/Directory.Build.props
+          $taskVersion = [string]$taskProps.Project.PropertyGroup.Version
+          $taskTag = "windows-v$taskVersion"
+          $taskNotes = "docs/releases/$taskTag.md"
+          if (!(Test-Path $taskNotes)) { throw 'Release notes are missing.' }
+          gh run download $env:TASK_RUN_ID --repo $env:TASK_REPOSITORY --name LumaShot-Windows-packages --dir packages
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download verified packages.' }
+          $taskExpected = @{}
+          foreach ($taskLine in Get-Content packages/SHA256SUMS-windows.txt) {
+            $taskParts = $taskLine -split '\s+', 2
+            if ($taskParts.Count -ne 2 -or $taskParts[0] -notmatch '^[a-f0-9]{64}$' -or $taskParts[1] -notmatch "^LumaShot-v$([regex]::Escape($taskVersion))-windows-(x64|arm64)-(setup\.exe|portable\.zip)$") { throw 'Unexpected checksum entry.' }
+            $taskFile = Join-Path packages $taskParts[1]
+            $taskHash = (Get-FileHash $taskFile -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($taskHash -ne $taskParts[0]) { throw "Checksum mismatch: $taskFile" }
+            $taskExpected[$taskParts[1]] = "sha256:$taskHash"
+          }
+          if ($taskExpected.Count -ne 4) { throw 'Both architectures must have installer and portable packages.' }
+          foreach ($taskArch in @('x64','arm64')) {
+            $taskArchive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path "packages/LumaShot-v$taskVersion-windows-$taskArch-portable.zip"))
+            try {
+              $taskExe = $taskArchive.GetEntry('LumaShot.exe')
+              if (!$taskExe -or !$taskArchive.GetEntry('LICENSE.txt') -or !(($taskArchive.Entries.FullName -replace '\\','/') -match '^third-party/.+/LICENSE')) { throw 'Portable package is incomplete.' }
+              $taskMemory = [IO.MemoryStream]::new()
+              $taskStream = $taskExe.Open()
+              try { $taskStream.CopyTo($taskMemory) } finally { $taskStream.Dispose() }
+              $taskReader = [IO.BinaryReader]::new($taskMemory)
+              $taskMemory.Position = 0
+              if ($taskReader.ReadUInt16() -ne 0x5A4D) { throw 'Application is not a Windows executable.' }
+              $taskMemory.Position = 0x3C; $taskPE = $taskReader.ReadUInt32()
+              $taskMemory.Position = $taskPE
+              if ($taskReader.ReadUInt32() -ne 0x4550) { throw 'Invalid executable header.' }
+              $taskMachine = $taskReader.ReadUInt16()
+              if (($taskArch -eq 'x64' -and $taskMachine -ne 0x8664) -or ($taskArch -eq 'arm64' -and $taskMachine -ne 0xAA64)) { throw 'Executable architecture does not match package name.' }
+              $taskReader.Dispose()
+            } finally { $taskArchive.Dispose() }
+          }
+          $taskChecksumHash = (Get-FileHash packages/SHA256SUMS-windows.txt -Algorithm SHA256).Hash.ToLowerInvariant()
+          $taskExpected['SHA256SUMS-windows.txt'] = "sha256:$taskChecksumHash"
+          $taskRelease = gh release view $taskTag --repo $env:TASK_REPOSITORY --json isDraft,targetCommitish,assets 2>$null | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $taskTag --repo $env:TASK_REPOSITORY --target $taskRun.head_sha --title "LumaShot for Windows v$taskVersion" --notes-file $taskNotes --draft --latest=false
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create draft release.' }
+            $taskRelease = gh release view $taskTag --repo $env:TASK_REPOSITORY --json isDraft,targetCommitish,assets | ConvertFrom-Json
+          }
+          if (!$taskRelease.isDraft -or $taskRelease.targetCommitish -ne $taskRun.head_sha) { throw 'Refusing to modify a public release or a draft for another source commit.' }
+          foreach ($taskName in $taskExpected.Keys) {
+            $taskAsset = $taskRelease.assets | Where-Object name -eq $taskName
+            if ($taskAsset) {
+              if ($taskAsset.digest -ne $taskExpected[$taskName]) { throw 'Existing draft asset has different bytes.' }
+            } else {
+              gh release upload $taskTag "packages/$taskName" --repo $env:TASK_REPOSITORY
+              if ($LASTEXITCODE -ne 0) { throw "Upload failed: $taskName" }
+            }
+          }
+          $taskAssets = (gh release view $taskTag --repo $env:TASK_REPOSITORY --json assets | ConvertFrom-Json).assets
+          if ($taskAssets.Count -ne $taskExpected.Count) { throw 'Unexpected release asset count.' }
+          foreach ($taskAsset in $taskAssets) { if ($taskAsset.digest -ne $taskExpected[$taskAsset.name]) { throw 'Published asset checksum mismatch.' } }
+          gh release edit $taskTag --repo $env:TASK_REPOSITORY --draft=false --latest=false
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish release.' }
+          Write-Output "Published $taskTag from verified source $($taskRun.head_sha)"

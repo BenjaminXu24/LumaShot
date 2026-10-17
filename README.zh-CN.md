@@ -2,7 +2,15 @@
 
 原生桌面截图与标注工具。macOS 版适用于 macOS 14 及以上，使用 SwiftUI、AppKit 和 ScreenCaptureKit。
 
-**Windows 版：**已新增原生 WPF 版本，包含区域/窗口/全屏/滚动长截图、标注、复制与保存，提供安装包和免安装包。详见 [Windows 使用与开发说明](Windows/README.md)。以下说明针对 macOS 版。
+**Windows 版：**[下载 Windows v0.1.0](https://github.com/BenjaminXu24/LumaShot/releases/tag/windows-v0.1.0)，包含区域/窗口/全屏/滚动长截图、标注、复制与保存，提供 x64/ARM64 安装包和免安装包。详见 [Windows 使用与开发说明](Windows/README.md)。以下说明针对 macOS 版。
+
+<details>
+<summary>查看 Windows 版界面</summary>
+
+![Windows 主界面](docs/images/windows-home.png)
+![Windows 标注编辑器](docs/images/windows-editor.png)
+
+</details>
 
 [English](README.md) · [下载 v0.1.0](https://github.com/BenjaminXu24/LumaShot/releases/tag/v0.1.0) · [反馈问题](https://github.com/BenjaminXu24/LumaShot/issues)
 

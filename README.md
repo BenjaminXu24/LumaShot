@@ -2,7 +2,15 @@
 
 A native desktop screenshot tool for capturing, annotating, and sharing a moment.
 
-**Windows:** a native WPF edition with region/window/display capture, scrolling screenshots, annotation, clipboard export, and local history is available in [Windows/](Windows/README.md). It uses the same Control + Shift + 1–4 capture shortcuts. The macOS instructions follow below.
+**Windows:** [download Windows v0.1.0](https://github.com/BenjaminXu24/LumaShot/releases/tag/windows-v0.1.0) or read the [Windows guide](Windows/README.md). The native WPF edition includes region/window/display capture, scrolling screenshots, annotation, clipboard export, and local history, with Control + Shift + 1–4 capture shortcuts. The macOS instructions follow below.
+
+<details>
+<summary>Windows interface previews</summary>
+
+![LumaShot for Windows](docs/images/windows-home.png)
+![Windows annotation editor](docs/images/windows-editor.png)
+
+</details>
 
 [中文说明](README.zh-CN.md) · [Download v0.1.0](https://github.com/BenjaminXu24/LumaShot/releases/tag/v0.1.0) · [Report an issue](https://github.com/BenjaminXu24/LumaShot/issues)
 
