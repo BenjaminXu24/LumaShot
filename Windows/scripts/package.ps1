@@ -9,6 +9,17 @@ New-Item $taskRelease -ItemType Directory -Force | Out-Null
 dotnet publish (Join-Path $taskRoot 'Windows/LumaShot.Windows/LumaShot.Windows.csproj') -c Release -r $Runtime --self-contained true -p:DebugType=None -p:DebugSymbols=false -o $taskOutput
 if ($LASTEXITCODE -ne 0) { throw 'Windows publish failed.' }
 if (!(Test-Path (Join-Path $taskOutput 'LumaShot.exe')) -or !(Test-Path (Join-Path $taskOutput 'LICENSE.txt'))) { throw 'Publish is missing application or license.' }
+$taskNuget = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path ([Environment]::GetFolderPath('UserProfile')) '.nuget/packages' }
+foreach ($taskPackage in @("microsoft.netcore.app.runtime.$Runtime", "microsoft.windowsdesktop.app.runtime.$Runtime")) {
+    $taskPackageRoot = Join-Path $taskNuget $taskPackage
+    if (!(Test-Path $taskPackageRoot)) { throw "Runtime license package not found: $taskPackage" }
+    $taskPackageVersion = Get-ChildItem $taskPackageRoot -Directory | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+    $taskNotices = Get-ChildItem $taskPackageVersion.FullName -File | Where-Object { $_.Name -match '^(LICENSE(\.TXT)?|THIRD-PARTY-NOTICES(\.TXT)?)$' }
+    if (!$taskNotices) { throw "Runtime license notices not found: $taskPackage" }
+    $taskNoticeDir = Join-Path $taskOutput "third-party/$taskPackage"
+    New-Item $taskNoticeDir -ItemType Directory -Force | Out-Null
+    $taskNotices | Copy-Item -Destination $taskNoticeDir
+}
 $taskArch = $Runtime.Substring(4)
 $taskZip = Join-Path $taskRelease "LumaShot-v$taskVersion-windows-$taskArch-portable.zip"
 Compress-Archive -Path "$taskOutput/*" -DestinationPath $taskZip -Force

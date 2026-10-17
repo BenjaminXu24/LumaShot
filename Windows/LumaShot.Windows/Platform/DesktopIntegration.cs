@@ -14,6 +14,7 @@ internal sealed class DesktopIntegration : IDisposable
     private readonly Action quit;
     private readonly List<int> registered = [];
     private nint icon;
+    private bool disposed;
     private readonly uint taskbarCreated;
     public Action? Cancel { get; set; }
     public List<string> Conflicts { get; } = [];
@@ -81,6 +82,7 @@ internal sealed class DesktopIntegration : IDisposable
     }
     public void Dispose()
     {
+        if (disposed) return; disposed = true;
         foreach (var id in registered) Native.UnregisterHotKey(handle, id);
         Native.UnregisterHotKey(handle, 10); var data = Data(); Shell_NotifyIcon(2, ref data);
         if (icon != 0) { DestroyIcon(icon); icon = 0; }

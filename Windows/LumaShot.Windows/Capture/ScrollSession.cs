@@ -64,7 +64,10 @@ internal sealed class ScrollSession : IDisposable
                 var result = await AddFrame(true);
                 if (token.IsCancellationRequested || ended) return;
                 unchanged = result == AppendStatus.Unchanged ? unchanged + 1 : 0;
-                if (unchanged >= 2) { Pause("页面已停止滚动，点击「完成」进入标注"); return; }
+                if (unchanged >= 2)
+                {
+                    Pause(stitcher.FrameCount > 1 ? "页面已停止滚动，点击「完成」进入标注" : "画面没有滚动，请确认选中了滚动内容；也可手动滚动后添加"); return;
+                }
                 await Task.Delay(180, token);
             }
         }

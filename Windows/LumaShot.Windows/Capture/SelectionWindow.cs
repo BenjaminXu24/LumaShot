@@ -23,7 +23,7 @@ internal sealed class SelectionWindow : Window
     {
         this.display = display; this.targets = targets; this.mode = mode;
         WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = false;
-        Topmost = true; WindowStartupLocation = WindowStartupLocation.Manual; Background = Brushes.Black;
+        Topmost = true; WindowStartupLocation = WindowStartupLocation.Manual; Background = Brushes.Black; Cursor = Cursors.Cross;
         surface = new SelectionSurface(ImageCodec.Bitmap(snapshot), mode); Content = surface;
         SourceInitialized += (_, _) => Native.SetWindowPos(new WindowInteropHelper(this).Handle, -1, display.X, display.Y, display.Width, display.Height, 0x0040);
         Loaded += (_, _) => { Activate(); Focus(); };

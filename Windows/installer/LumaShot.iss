@@ -21,11 +21,12 @@ AppSupportURL=https://github.com/BenjaminXu24/LumaShot/issues
 DefaultDirName={localappdata}\Programs\LumaShot
 DefaultGroupName=LumaShot
 PrivilegesRequired=lowest
-MinVersion=10.0.19045
 #if RuntimeArch == "arm64"
+MinVersion=10.0.22000
 ArchitecturesAllowed=arm64
 ArchitecturesInstallIn64BitMode=arm64
 #else
+MinVersion=10.0.19045
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 #endif

@@ -20,7 +20,11 @@ internal static class SmokeTests
     private static void SaveWindow(Window window, string path)
     {
         window.UpdateLayout(); var visual = window.Content as FrameworkElement ?? throw new Exception("Window content missing.");
-        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(visual.ActualWidth), (int)Math.Ceiling(visual.ActualHeight), 96, 96, PixelFormats.Pbgra32); bitmap.Render(visual);
+        var width = (int)Math.Ceiling(visual.ActualWidth); var height = (int)Math.Ceiling(visual.ActualHeight);
+        var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+        var background = new DrawingVisual();
+        using (var dc = background.RenderOpen()) dc.DrawRectangle(window.Background, null, new(0, 0, width, height));
+        bitmap.Render(background); bitmap.Render(visual);
         ImageCodec.Save(bitmap, path);
     }
     public static async Task Run(string directory)
@@ -42,7 +46,7 @@ internal static class SmokeTests
         var roundTrip = ImageCodec.Frame(rendered); Check(!roundTrip.Pixels.SequenceEqual(demo.Pixels), "Annotation changes exported pixels");
         var mosaic = new Annotation(AnnotationTool.Mosaic, [new(130, 220), new(1000, 390)], StrokeWidth: 10);
         var masked = ImageCodec.Frame(AnnotationRenderer.Render(demo, [mosaic])); Check(!masked.Pixels.SequenceEqual(demo.Pixels), "Mosaic changes output bitmap");
-        await ImageCodec.CopyAsync(rendered); Check(Clipboard.ContainsImage() && Clipboard.GetImage()?.PixelWidth == demo.Width, "Native bitmap and PNG clipboard export");
+        await ImageCodec.CopyAsync(rendered); Check(Clipboard.ContainsImage() && Clipboard.GetImage()?.PixelWidth == demo.Width && Clipboard.GetData("PNG") is not null, "Native bitmap and PNG clipboard export");
         editor.Close();
         for (var i = 0; i < 103; i++) controller.Store.Add(new(2, 2, Enumerable.Repeat((byte)255, 16).ToArray()), "测试");
         Check(controller.Store.Items.Count == 100 && new CaptureStore(Path.Combine(directory, "isolated-data")).Items.Count == 100, "History retention and persistence");
@@ -57,6 +61,21 @@ internal static class SmokeTests
         var viewer = new ScrollViewer { Content = new Fixture(), VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, CanContentScroll = false, Background = Brushes.White };
         var fixture = new Window { Title = "LumaShot Windows scroll fixture", Content = viewer, Width = 760, Height = 590, Left = 70, Top = 70, Topmost = true };
         fixture.Show(); fixture.Activate(); await Task.Delay(300);
+        var display = Native.PointerDisplay();
+        var selected = new TaskCompletionSource<Selection?>();
+        var regionOverlay = new SelectionWindow(display, Native.Capture(display), [], 1);
+        regionOverlay.Selected += value => selected.TrySetResult(value); regionOverlay.Show(); await Task.Delay(200);
+        await Native.TestDrag(new(display.X + 100, display.Y + 100, 220, 150));
+        var region = await selected.Task.WaitAsync(TimeSpan.FromSeconds(5)); regionOverlay.Close();
+        Check(region is not null && Math.Abs(region.Bounds.Width - 220) <= 1 && Math.Abs(region.Bounds.Height - 150) <= 1, "Actual region overlay drag preserves physical coordinates");
+        var fixtureHandle = new WindowInteropHelper(fixture).Handle;
+        var windowTarget = new DesktopWindow(fixtureHandle, new(display.X + 70, display.Y + 70, 760, 590), "fixture");
+        selected = new(); var windowOverlay = new SelectionWindow(display, Native.Capture(display), [windowTarget], 2);
+        windowOverlay.Selected += value => selected.TrySetResult(value); windowOverlay.Show(); await Task.Delay(200);
+        await Native.TestDrag(new(display.X + 150, display.Y + 150, 0, 0));
+        var chosenWindow = await selected.Task.WaitAsync(TimeSpan.FromSeconds(5)); windowOverlay.Close();
+        Check(chosenWindow?.TargetWindow == fixtureHandle && chosenWindow.Bounds == windowTarget.Bounds, "Actual window hover and click selects target");
+        fixture.Activate(); await Task.Delay(150);
         var first = viewer.PointToScreen(new Point(5, 5)); var last = viewer.PointToScreen(new Point(viewer.ActualWidth - 5, viewer.ActualHeight - 5));
         var bounds = new PixelRect((int)first.X, (int)first.Y, (int)(last.X - first.X), (int)(last.Y - first.Y));
         using var session = new ScrollSession(new(bounds, new WindowInteropHelper(fixture).Handle), Native.Capture(bounds));

@@ -1,6 +1,8 @@
 # 拾光截图 · LumaShot
 
-为 macOS 14 及以上系统开发的原生截图工具，使用 SwiftUI、AppKit 和 ScreenCaptureKit，无第三方运行依赖。
+原生桌面截图与标注工具。macOS 版适用于 macOS 14 及以上，使用 SwiftUI、AppKit 和 ScreenCaptureKit。
+
+**Windows 版：**已新增原生 WPF 版本，包含区域/窗口/全屏/滚动长截图、标注、复制与保存，提供安装包和免安装包。详见 [Windows 使用与开发说明](Windows/README.md)。以下说明针对 macOS 版。
 
 [English](README.md) · [下载 v0.1.0](https://github.com/BenjaminXu24/LumaShot/releases/tag/v0.1.0) · [反馈问题](https://github.com/BenjaminXu24/LumaShot/issues)
 

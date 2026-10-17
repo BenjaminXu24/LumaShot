@@ -124,4 +124,15 @@ internal static class Native
         Input[] input = [Key(0x11), Key(0x10), Key(key), Key(key, true), Key(0x10, true), Key(0x11, true)];
         if (SendInput((uint)input.Length, input, Marshal.SizeOf<Input>()) != input.Length) throw new Win32Exception("无法发送测试快捷键。");
     }
+    internal static async Task TestDrag(PixelRect rect)
+    {
+        void Button(bool down)
+        {
+            var input = new Input { Type = 0, Value = new InputUnion { Mouse = new MouseInput { Flags = down ? 2u : 4u } } };
+            if (SendInput(1, [input], Marshal.SizeOf<Input>()) != 1) throw new Win32Exception("无法发送测试鼠标事件。");
+        }
+        SetCursorPos(rect.X, rect.Y); await Task.Delay(80); Button(true); await Task.Delay(80);
+        for (var i = 1; i <= 15; i++) { SetCursorPos(rect.X + rect.Width * i / 15, rect.Y + rect.Height * i / 15); await Task.Delay(20); }
+        await Task.Delay(80); Button(false); await Task.Delay(80);
+    }
 }
