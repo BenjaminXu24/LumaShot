@@ -10,3 +10,8 @@ DerivedData/
 *.p12
 *.p8
 *.mobileprovision
+**/bin/
+**/obj/
+.vs/
+*.user
+*.pfx
