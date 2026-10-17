@@ -2,7 +2,7 @@ name: Windows
 
 on:
   push:
-    branches: [main, 'codex/windows-app']
+    branches: [main]
     paths: ['Windows/**', '.github/workflows/windows.yml', 'LICENSE']
   pull_request:
     paths: ['Windows/**', '.github/workflows/windows.yml', 'LICENSE']

@@ -18,6 +18,7 @@ internal sealed class EditorWindow : Window
     internal void MarkExported() => dirty = false;
     public EditorWindow(PixelFrame image)
     {
+        Style = (Style)Application.Current.FindResource(typeof(Window));
         Title = "截图标注 · LumaShot"; Width = 1200; Height = 850; MinWidth = 900; MinHeight = 650; WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Canvas = new(image); Canvas.RequestText = PromptText;
         var layout = new DockPanel();
