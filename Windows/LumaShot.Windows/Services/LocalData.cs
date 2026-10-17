@@ -54,7 +54,7 @@ internal sealed class CaptureStore
     {
         if (!Safe(item.Filename)) throw new IOException("无效的图片名称。");
         if (thumbnails.TryGetValue(item.Id, out var image)) return image;
-        if (thumbnails.Count >= 40) thumbnails.Clear();
+        if (thumbnails.Count >= 100) thumbnails.Remove(thumbnails.Keys.First());
         return thumbnails[item.Id] = ImageCodec.Thumbnail(Path.Combine(DirectoryPath, item.Filename));
     }
     public void Delete(CaptureItem item)

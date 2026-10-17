@@ -48,6 +48,10 @@ internal static class SmokeTests
         var masked = ImageCodec.Frame(AnnotationRenderer.Render(demo, [mosaic])); Check(!masked.Pixels.SequenceEqual(demo.Pixels), "Mosaic changes output bitmap");
         await ImageCodec.CopyAsync(rendered); Check(Clipboard.ContainsImage() && Clipboard.GetImage()?.PixelWidth == demo.Width && Clipboard.GetData("PNG") is not null, "Native bitmap and PNG clipboard export");
         editor.Close();
+        var tallPath = Path.Combine(directory, "thumbnail-input.png");
+        ImageCodec.Save(ImageCodec.Bitmap(new(2, 10_000, Enumerable.Repeat((byte)255, 80_000).ToArray())), tallPath);
+        var thumbnail = ImageCodec.Thumbnail(tallPath);
+        Check(thumbnail.PixelWidth is > 0 and <= 360 && thumbnail.PixelHeight is > 0 and <= 216, "Very tall history thumbnails have bounded allocations");
         for (var i = 0; i < 103; i++) controller.Store.Add(new(2, 2, Enumerable.Repeat((byte)255, 16).ToArray()), "测试");
         Check(controller.Store.Items.Count == 100 && new CaptureStore(Path.Combine(directory, "isolated-data")).Items.Count == 100, "History retention and persistence");
         controller.Store.Delete(controller.Store.Items[0]); Check(controller.Store.Items.Count == 99, "History delete updates index"); controller.Store.Clear();

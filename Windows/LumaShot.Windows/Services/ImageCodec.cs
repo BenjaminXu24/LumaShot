@@ -26,14 +26,19 @@ internal static class ImageCodec
     public static PixelFrame Load(string path)
     {
         using var stream = File.OpenRead(path);
-        var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat | BitmapCreateOptions.DelayCreation, BitmapCacheOption.OnDemand);
         return Frame(decoder.Frames[0]);
     }
     public static BitmapSource Thumbnail(string path)
     {
         using var stream = File.OpenRead(path);
+        var header = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.OnDemand).Frames[0];
+        var scale = Math.Min(1, Math.Min(360.0 / header.PixelWidth, 216.0 / header.PixelHeight));
+        var width = Math.Max(1, (int)Math.Round(header.PixelWidth * scale));
+        var height = Math.Max(1, (int)Math.Round(header.PixelHeight * scale));
+        stream.Position = 0;
         var bitmap = new BitmapImage(); bitmap.BeginInit(); bitmap.CacheOption = BitmapCacheOption.OnLoad;
-        bitmap.DecodePixelWidth = 360; bitmap.StreamSource = stream; bitmap.EndInit(); bitmap.Freeze(); return bitmap;
+        bitmap.DecodePixelWidth = width; bitmap.DecodePixelHeight = height; bitmap.StreamSource = stream; bitmap.EndInit(); bitmap.Freeze(); return bitmap;
     }
     public static byte[] Png(BitmapSource source)
     {

@@ -47,6 +47,8 @@ public partial class MainWindow : Window
     private void RenderHistory()
     {
         if (!IsInitialized || HistoryCards is null) return;
+        HistoryNav.Content = $"▱    截图历史   {controller.Store.Items.Count}";
+        if (HistoryPage.Visibility != Visibility.Visible) return;
         HistoryCards.Children.Clear();
         var query = HistorySearch.Text.Trim();
         var items = controller.Store.Items.Where(i => query.Length == 0 || i.Description.Contains(query, StringComparison.OrdinalIgnoreCase) || i.Date.Contains(query) || i.Filename.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -70,7 +72,6 @@ public partial class MainWindow : Window
             }
             catch (Exception ex) when (ex is System.IO.IOException or NotSupportedException) { controller.Notify("部分历史图片无法读取，可在截图文件夹中检查"); }
         }
-        HistoryNav.Content = $"▱    截图历史   {controller.Store.Items.Count}";
     }
     private void Try(Action action) { try { action(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "操作未完成"); } }
     private void OpenHistoryFolder(object sender, RoutedEventArgs e) => Try(() => AppController.OpenFolder(controller.Store.DirectoryPath));
