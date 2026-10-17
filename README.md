@@ -1,6 +1,8 @@
 # LumaShot · 拾光截图
 
-A native macOS screenshot tool for capturing, annotating, and sharing a moment.
+A native desktop screenshot tool for capturing, annotating, and sharing a moment.
+
+**Windows:** a native WPF edition with region/window/display capture, scrolling screenshots, annotation, clipboard export, and local history is available in [Windows/](Windows/README.md). It uses the same Control + Shift + 1–4 capture shortcuts. The macOS instructions follow below.
 
 [中文说明](README.zh-CN.md) · [Download v0.1.0](https://github.com/BenjaminXu24/LumaShot/releases/tag/v0.1.0) · [Report an issue](https://github.com/BenjaminXu24/LumaShot/issues)
 

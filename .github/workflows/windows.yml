@@ -1,0 +1,74 @@
+name: Windows
+
+on:
+  push:
+    branches: [main]
+    paths: ['Windows/**', '.github/workflows/windows.yml', 'LICENSE']
+  pull_request:
+    paths: ['Windows/**', '.github/workflows/windows.yml', 'LICENSE']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Core pixel and annotation tests
+        run: dotnet run --project Windows/LumaShot.Core.Tests -c Release
+      - name: Build Windows desktop app
+        run: dotnet build Windows/LumaShot.Windows -c Release
+      - name: Native Windows smoke test
+        shell: pwsh
+        run: |
+          $taskOutput = Join-Path $PWD 'build/windows-smoke'
+          $taskDll = Join-Path $PWD 'Windows/LumaShot.Windows/bin/Release/net10.0-windows/LumaShot.dll'
+          $taskProcess = Start-Process dotnet -ArgumentList @('"' + $taskDll + '"', '--smoke-test', '"' + $taskOutput + '"') -PassThru
+          if (!$taskProcess.WaitForExit(120000)) { $taskProcess.Kill(); throw 'Native smoke test timed out.' }
+          if ($taskProcess.ExitCode -ne 0) {
+            if (Test-Path "$taskOutput/failure.txt") { Get-Content "$taskOutput/failure.txt" }
+            throw "Native smoke test failed: $($taskProcess.ExitCode)"
+          }
+          Get-Content "$taskOutput/checks.json"
+      - name: Package x64
+        shell: pwsh
+        run: ./Windows/scripts/package.ps1 -Runtime win-x64
+      - name: Package ARM64
+        shell: pwsh
+        run: ./Windows/scripts/package.ps1 -Runtime win-arm64
+      - name: Verify installer and uninstall
+        shell: pwsh
+        run: |
+          $taskInstaller = Get-ChildItem build/windows-releases/*x64-setup.exe | Select-Object -First 1
+          $taskDir = Join-Path $env:TEMP 'LumaShot-install-check'
+          $taskProcess = Start-Process $taskInstaller.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$taskDir`"") -Wait -PassThru
+          if ($taskProcess.ExitCode -ne 0 -or !(Test-Path "$taskDir/LumaShot.exe")) { throw 'Installation failed.' }
+          $taskProcess = Start-Process "$taskDir/unins000.exe" -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru
+          if ($taskProcess.ExitCode -ne 0) { throw 'Uninstall failed.' }
+      - name: Upload diagnostics and previews
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Windows-validation
+          path: build/windows-smoke/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: LumaShot-Windows-packages
+          path: build/windows-releases/
+          if-no-files-found: error
+          retention-days: 14
