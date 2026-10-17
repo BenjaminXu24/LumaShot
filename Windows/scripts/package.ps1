@@ -15,11 +15,14 @@ New-Item $taskRelease -ItemType Directory -Force | Out-Null
 Invoke-LumaShotDotnet -Arguments @('publish', (Join-Path $taskRoot 'Windows/LumaShot.Windows/LumaShot.Windows.csproj'), '-c', 'Release', '-r', $Runtime, '--self-contained', 'true', '-p:DebugType=None', '-p:DebugSymbols=false', '-o', $taskOutput)
 if (!(Test-Path (Join-Path $taskOutput 'LumaShot.exe')) -or !(Test-Path (Join-Path $taskOutput 'LICENSE.txt'))) { throw 'Publish is missing application or license.' }
 $taskAssets = Get-Content (Join-Path $taskRoot 'Windows/LumaShot.Windows/obj/project.assets.json') -Raw | ConvertFrom-Json
+$taskDependencies = Get-Content (Join-Path $taskOutput 'LumaShot.deps.json') -Raw | ConvertFrom-Json
 foreach ($taskPackage in @("microsoft.netcore.app.runtime.$Runtime", "microsoft.windowsdesktop.app.runtime.$Runtime")) {
-    # Follow the actual restore result, including custom NuGet cache locations and exact runtime versions.
-    $taskLibrary = $taskAssets.libraries.PSObject.Properties | Where-Object { $_.Name.StartsWith("$taskPackage/", [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
-    if (!$taskLibrary) { throw "Runtime package missing from restore result: $taskPackage" }
-    $taskPackageDirectory = $taskAssets.packageFolders.PSObject.Properties.Name | ForEach-Object { Join-Path $_ $taskLibrary.Value.path } | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | Select-Object -First 1
+    # Runtime packs are PackageDownload items, so they need not appear in assets.libraries.
+    # Follow the published runtime version and the actual restore cache locations.
+    $taskLibrary = $taskDependencies.libraries.PSObject.Properties | Where-Object { $_.Name.StartsWith("runtimepack.$taskPackage/", [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+    if (!$taskLibrary) { throw "Runtime package missing from published dependencies: $taskPackage" }
+    $taskPackagePath = $taskLibrary.Name.Substring('runtimepack.'.Length).ToLowerInvariant()
+    $taskPackageDirectory = $taskAssets.packageFolders.PSObject.Properties.Name | ForEach-Object { Join-Path $_ $taskPackagePath } | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | Select-Object -First 1
     if (!$taskPackageDirectory) { throw "Runtime license package not found: $($taskLibrary.Name)" }
     $taskNotices = Get-ChildItem -LiteralPath $taskPackageDirectory -File | Where-Object { $_.Name -match '^(LICENSE(\.TXT)?|THIRD-PARTY-NOTICES(\.TXT)?)$' }
     if (!$taskNotices) { throw "Runtime license notices not found: $taskPackage" }
