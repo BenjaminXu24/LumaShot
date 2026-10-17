@@ -8,19 +8,21 @@
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/BenjaminXu24/LumaShot/releases) 下载 **LumaShot-v0.1.0-macOS-universal.zip**，解压后将 `LumaShot.app` 拖入「应用程序」。通用包同时支持 Intel 和 Apple Silicon。
+从 [GitHub Releases](https://github.com/BenjaminXu24/LumaShot/releases) 下载 **[LumaShot-v0.1.0-macOS-universal-notarized.zip](https://github.com/BenjaminXu24/LumaShot/releases/download/v0.1.0/LumaShot-v0.1.0-macOS-universal-notarized.zip)**，解压后将 `LumaShot.app` 拖入「应用程序」。通用包同时支持 Intel 和 Apple Silicon。
 
-Release 附带 `SHA256SUMS.txt`，将它和安装包放在同一目录，运行 `shasum -a 256 -c SHA256SUMS.txt` 即可校验。
+公证版附带 [SHA256SUMS-notarized.txt](https://github.com/BenjaminXu24/LumaShot/releases/download/v0.1.0/SHA256SUMS-notarized.txt)，将它和安装包放在同一目录，运行 `shasum -a 256 -c SHA256SUMS-notarized.txt` 即可校验。
 
 这是早期可用版本，当前界面为简体中文。第三方自动滚动、物理多显示器组合仍需更多实际验证；动画、虚拟列表、重复图案或重叠不足可能影响拼接。历史记录保存原图，标注会话不持久化。
 
 ## 运行
 
-双击 `build/LumaShot.app`。也可以将应用拖进「应用程序」文件夹。
+双击解压得到的 `LumaShot.app`，也可以将应用拖进「应用程序」文件夹。源码构建的应用位于 `build/LumaShot.app`。
 
 首次截图时，在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」允许「拾光截图 / LumaShot」。如系统提示重新打开应用，请退出再启动。自动滚动长截图还需要「辅助功能」权限；不授权辅助功能也可以手动滚动拼接。
 
-此版本使用临时签名，尚未经过 Developer ID 签名及 Apple 公证。下载后如被系统拦截，请核对来源后在「系统设置 → 隐私与安全性」选择「仍要打开」，或从源码构建。
+推荐下载的 `*-notarized.zip` 已完成 **Developer ID 正式签名、Apple 公证及票据装订**，双架构均通过 Apple 检查，并已通过本机 Gatekeeper 验证。
+
+原始 `LumaShot-v0.1.0-macOS-universal.zip` 及其 `SHA256SUMS.txt` 保留不变；该旧包使用临时签名且未公证，安装时请选择名称带 `notarized` 的版本。本地及 CI 构建默认仍使用临时签名。
 
 ## 使用
 
@@ -101,7 +103,8 @@ build/CaptureSmoke
 - `Sources/LumaShot/Services/`：Carbon 全局快捷键、本地历史、图像导出。
 - `Sources/LumaShot/`：应用入口、主界面、历史与偏好设置。
 - `Resources/Info.plist`：应用包配置与权限说明。
-- `scripts/build.sh`：生成图标、构建应用、临时签名。
+- `scripts/build.sh`：生成图标、构建应用，默认临时签名，可选 Developer ID 签名。
+- `scripts/notarize.sh`：正式签名、提交 Apple 公证、装订票据及验证。
 
 捕捉接口参考 [Apple ScreenCaptureKit 文档](https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager)。
 

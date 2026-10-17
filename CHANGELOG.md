@@ -15,11 +15,13 @@ First public, early-stage release of LumaShot / 拾光截图.
 - Native Retina rendering, lightweight history thumbnails, and permission guidance.
 - MIT license, bilingual documentation, contributor guidance, and macOS CI.
 - Universal Intel / Apple Silicon application archive and SHA-256 checksum.
+- Additional Developer ID-signed, Apple-notarized universal archive with a stapled ticket and a separate `SHA256SUMS-notarized.txt`; the original release assets remain unchanged.
+- Optional local signing and notarization scripts, Keychain credential setup, and resumable submission workflow.
 
 ### Known limitations
 
 - The interface is currently in Simplified Chinese.
-- Downloaded builds use ad-hoc signing and are not Developer ID signed or notarized.
+- The original archive and default local/CI builds are ad-hoc signed. Use the additional `*-notarized.zip` release asset for Developer ID signing and Apple notarization.
 - Third-party automatic scrolling and physical multi-display arrangements need broader real-world testing.
 - Scrolling alignment can fail on animations, virtualized lists, or repetitive content.
 - History stores original screenshots; annotation sessions are not persisted.

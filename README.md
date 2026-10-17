@@ -26,7 +26,7 @@ Built with SwiftUI, AppKit, ScreenCaptureKit, and Carbon. No third-party runtime
 
 ## Install
 
-1. Download **[LumaShot-v0.1.0-macOS-universal.zip](https://github.com/BenjaminXu24/LumaShot/releases/download/v0.1.0/LumaShot-v0.1.0-macOS-universal.zip)** from [Releases](https://github.com/BenjaminXu24/LumaShot/releases).
+1. Download **[LumaShot-v0.1.0-macOS-universal-notarized.zip](https://github.com/BenjaminXu24/LumaShot/releases/download/v0.1.0/LumaShot-v0.1.0-macOS-universal-notarized.zip)** from [Releases](https://github.com/BenjaminXu24/LumaShot/releases).
 2. Extract it and move `LumaShot.app` into Applications.
 3. Launch LumaShot and grant **Screen Recording** access when prompted. macOS may call this **Screen & System Audio Recording**. Reopen the app if the system requests it.
 4. For automatic scrolling, also grant **Accessibility** access. Manual frame stitching works without Accessibility approval.
@@ -35,13 +35,15 @@ Requires **macOS 14 or later**. The universal archive contains **arm64 and x86_6
 
 ### Signing
 
-v0.1.0 uses **ad-hoc signing** and is **not Developer ID signed or notarized**. A downloaded copy may be blocked by Gatekeeper. After checking the project and download, use **System Settings → Privacy & Security → Open Anyway**, or build from source. SHA-256 checksums are attached to the release:
+The recommended `*-notarized.zip` is **Developer ID signed and Apple notarized**, with the ticket stapled to the app. Both architectures passed Apple's checks and local Gatekeeper assessment. Download the matching [SHA256SUMS-notarized.txt](https://github.com/BenjaminXu24/LumaShot/releases/download/v0.1.0/SHA256SUMS-notarized.txt) to verify it:
 
 ```sh
-shasum -a 256 -c SHA256SUMS.txt
+shasum -a 256 -c SHA256SUMS-notarized.txt
 ```
 
 Run that command in the directory containing the ZIP and checksum file.
+
+The original `LumaShot-v0.1.0-macOS-universal.zip` and its `SHA256SUMS.txt` remain available unchanged for reproducibility. That original download is ad-hoc signed and not notarized; choose the explicitly named notarized archive for installation.
 
 ## Capture
 
@@ -111,7 +113,7 @@ This is an **early-stage release**:
 - Long captures are limited to 50,000 pixels in height and approximately 80 megapixels total.
 - Annotation sessions are not persisted; the history contains originals.
 - The UI is Simplified Chinese; localization contributions are welcome.
-- Release binaries are ad-hoc signed, without Apple notarization.
+- Local and CI builds use ad-hoc signing by default; the recommended release archive is separately Developer ID signed and notarized.
 
 Tests run without screen permissions. See [CONTRIBUTING.md](CONTRIBUTING.md) for an optional local capture smoke check. UI previews can be generated with:
 
