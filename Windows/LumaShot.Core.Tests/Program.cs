@@ -141,4 +141,60 @@ Test("Dim overlay darkens a copy and stays opaque", () =>
     var clear = source.Dimmed(0);
     Check(clear.Pixels is [255, 0, 0, 255, 10, 20, 30, 255], "Zero overlay changed RGB.");
 });
+Test("Selection chrome is the perimeter, not the filled rectangle", () =>
+{
+    bool Covers(SelectionRect edge, double x, double y) => x >= edge.X && y >= edge.Y && x < edge.Right && y < edge.Bottom;
+    var area = new SelectionRect(0, 0, 800, 600);
+    var edges = SelectionGeometry.Edges(area);
+    Check(edges.Length == 4, "Expected four edges.");
+    var edgeArea = edges.Sum(edge => edge.Width * edge.Height);
+    Check(edgeArea * 20 < area.Width * area.Height, "800×600 edges cover the selection.");
+    Check(edges.All(edge => edge.Width <= SelectionGeometry.EdgeThickness || edge.Height <= SelectionGeometry.EdgeThickness), "An edge is as thick as the selection.");
+    var fullHd = new SelectionRect(0, 0, 1920, 1080);
+    var hdEdges = SelectionGeometry.Edges(fullHd);
+    Check(hdEdges.Sum(edge => edge.Width * edge.Height) * 50 < fullHd.Width * fullHd.Height, "1080p edges cover the selection.");
+    Check(hdEdges.Any(edge => Covers(edge, 0, 0)) && hdEdges.Any(edge => Covers(edge, 1919, 1079)), "A 1080p corner is missing.");
+    Check(!hdEdges.Any(edge => Covers(edge, 960, 540)), "The 1080p interior is part of the chrome.");
+    Check(SelectionGeometry.Edges(default).Length == 0, "Empty selection still has chrome.");
+    Check(SelectionGeometry.EdgeThickness == 2, "Edge thickness drifted.");
+});
+Test("Render flags stay opt-in and arguments win", () =>
+{
+    Check(RenderModeRequest.Resolve(null, null) == RenderModeRequest.Mode.Default, "Missing input changed the default.");
+    Check(RenderModeRequest.Resolve([], "") == RenderModeRequest.Mode.Default, "Empty environment changed the default.");
+    Check(RenderModeRequest.Resolve([], "auto") == RenderModeRequest.Mode.Default, "Auto selected a render mode.");
+    Check(RenderModeRequest.Resolve([], "nope") == RenderModeRequest.Mode.Default, "Unknown environment selected a render mode.");
+    Check(RenderModeRequest.Resolve([], "software") == RenderModeRequest.Mode.Software, "Software environment ignored.");
+    Check(RenderModeRequest.Resolve([], "HARDWARE") == RenderModeRequest.Mode.Hardware, "Hardware environment ignored.");
+    Check(RenderModeRequest.Resolve(["--software-render"], "hardware") == RenderModeRequest.Mode.Software, "Environment beat the flag.");
+    Check(RenderModeRequest.Resolve(["--hardware-render", "--software-render"], null) == RenderModeRequest.Mode.Software, "The last flag did not win.");
+    Check(RenderModeRequest.Resolve(["--software-render", "--hardware-render"], "software") == RenderModeRequest.Mode.Hardware, "The last flag did not win.");
+    Check(RenderModeRequest.Resolve(["--background"], "software") == RenderModeRequest.Mode.Software, "Unrelated argument hid the environment.");
+    Check(RenderModeRequest.EnvironmentVariable == "LUMASHOT_RENDER", "Render environment name changed.");
+});
+Test("Virtual and basic adapters are recognized by name", () =>
+{
+    string[] virtualOrBasic =
+    [
+        "Microsoft Basic Display Adapter", "VMware SVGA 3D", "Microsoft Hyper-V Video",
+        "VirtualBox Graphics Adapter", "Parallels Display Adapter (WDDM)", "QEMU VirtIO GPU",
+        "Red Hat QXL", "Indirect Display Driver", "Remote Display Adapter", "Virtual Display",
+        "Bochs Standard VGA"
+    ];
+    foreach (var name in virtualOrBasic) Check(AdapterNames.IsVirtualOrBasic(name), $"Missed {name}.");
+    foreach (var name in new[] { "NVIDIA GeForce RTX 3060", "Intel(R) UHD Graphics 770", "AMD Radeon RX 6600" })
+        Check(!AdapterNames.IsVirtualOrBasic(name), $"Physical adapter {name} looked virtual.");
+    Check(!AdapterNames.IsVirtualOrBasic(null) && !AdapterNames.IsVirtualOrBasic("  "), "Blank adapter name looked virtual.");
+});
+Test("Duration summary reports average, max, and p95", () =>
+{
+    var empty = DurationSummary.FromMilliseconds([]);
+    Check(empty.Count == 0 && empty.Average == 0 && empty.Max == 0 && empty.P95 == 0, "Empty summary is not zero.");
+    var one = DurationSummary.FromMilliseconds([4]);
+    Check(one.Count == 1 && one.Average == 4 && one.Max == 4 && one.P95 == 4, "Single sample changed.");
+    var ten = DurationSummary.FromMilliseconds([10, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    Check(ten.Count == 10 && Math.Abs(ten.Average - 5.5) < 1e-9 && ten.Max == 10 && ten.P95 == 10, "Ten-sample p95 mismatch.");
+    var twenty = DurationSummary.FromMilliseconds(Enumerable.Range(1, 20).Select(value => (double)value).ToArray());
+    Check(twenty.Max == 20 && twenty.P95 == 19, "Twenty-sample p95 mismatch.");
+});
 Console.WriteLine($"{passed} core checks passed.");

@@ -1,7 +1,9 @@
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using LumaShot.Core;
+using Microsoft.Win32;
 
 namespace LumaShot.Windows.Platform;
 
@@ -55,6 +57,12 @@ internal static class Native
     [DllImport("gdi32.dll")] private static extern nint CreateDIBSection(nint dc, ref BitmapInfo info, uint usage, out nint bits, nint section, uint offset);
     [DllImport("gdi32.dll", SetLastError = true)] private static extern bool BitBlt(nint target, int x, int y, int width, int height, nint source, int sx, int sy, uint operation);
     [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, Input[] input, int size);
+    [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
+    [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(nint monitor, int dpiType, out uint dpiX, out uint dpiY);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool EnumDisplayDevices(string? device, uint index, nint deviceInfo, uint flags);
+
+    internal readonly record struct MonitorDetails(PixelRect Bounds, int DpiX, int DpiY, double ScaleX, double ScaleY);
+    internal readonly record struct DisplayAdapter(string Name, string? DriverVersion, bool Active, bool VirtualOrBasic);
 
     internal static List<PixelRect> Displays()
     {
@@ -68,6 +76,77 @@ internal static class Native
     {
         GetCursorPos(out var point); var displays = Displays();
         return displays.FirstOrDefault(r => r.Contains(point.X, point.Y), displays[0]);
+    }
+    internal static bool IsRemoteSession()
+    {
+        try { return GetSystemMetrics(0x1000) != 0; }
+        catch (Exception) { return false; }
+    }
+    internal static PixelRect VirtualScreen()
+    {
+        try { return new(GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79)); }
+        catch (Exception) { return default; }
+    }
+    internal static List<MonitorDetails> Monitors()
+    {
+        var monitors = new List<MonitorDetails>();
+        try
+        {
+            MonitorProc callback = (nint monitor, nint dc, ref Rect rect, nint data) =>
+            {
+                var dpiX = 96; var dpiY = 96;
+                try
+                {
+                    if (GetDpiForMonitor(monitor, 0, out var x, out var y) == 0 && x > 0 && y > 0) { dpiX = (int)x; dpiY = (int)y; }
+                }
+                catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { }
+                monitors.Add(new(rect.Pixels, dpiX, dpiY, dpiX / 96.0, dpiY / 96.0));
+                return true;
+            };
+            EnumDisplayMonitors(0, 0, callback, 0);
+        }
+        catch (Exception) { }
+        return monitors;
+    }
+    internal static List<DisplayAdapter> Adapters()
+    {
+        var adapters = new List<DisplayAdapter>();
+        const int size = 4 + (32 + 128) * 2 + 4 + 128 * 2 + 128 * 2;
+        var buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            for (uint index = 0; ; index++)
+            {
+                for (var offset = 0; offset < size; offset += 4) Marshal.WriteInt32(buffer, offset, 0);
+                Marshal.WriteInt32(buffer, size);
+                if (!EnumDisplayDevices(null, index, buffer, 0)) break;
+                var name = ReadUnicode(buffer, 4 + 32 * 2, 128);
+                var flags = Marshal.ReadInt32(buffer, 4 + (32 + 128) * 2);
+                var key = ReadUnicode(buffer, 4 + (32 + 128) * 2 + 4 + 128 * 2, 128);
+                if (string.IsNullOrWhiteSpace(name) || (flags & 0x8) != 0) continue;
+                adapters.Add(new(name, DriverVersion(key), (flags & 0x1) != 0, AdapterNames.IsVirtualOrBasic(name)));
+            }
+        }
+        catch (Exception) { }
+        finally { Marshal.FreeHGlobal(buffer); }
+        return adapters;
+    }
+    private static string ReadUnicode(nint buffer, int byteOffset, int characters)
+    {
+        var text = Marshal.PtrToStringUni(buffer + byteOffset, characters) ?? "";
+        var end = text.IndexOf('\0');
+        return (end < 0 ? text : text[..end]).Trim();
+    }
+    private static string? DriverVersion(string? deviceKey)
+    {
+        try
+        {
+            const string prefix = @"\Registry\Machine\";
+            if (string.IsNullOrWhiteSpace(deviceKey) || !deviceKey.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+            using var key = Registry.LocalMachine.OpenSubKey(deviceKey[prefix.Length..]);
+            return key?.GetValue("DriverVersion") as string;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException) { return null; }
     }
     internal static List<DesktopWindow> Windows()
     {

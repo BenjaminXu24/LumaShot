@@ -18,13 +18,16 @@ public readonly record struct CapturePixels(int X, int Y, int Width, int Height)
 
 /// <summary>
 /// Pure selection math for the Windows overlay.
-/// Pointer moves stay responsive when the UI samples <see cref="PreviewCrop"/> instead of the full frame
-/// and posts at most one paint per <see cref="OverlayFrameGate"/> frame.
+/// Drag chrome uses <see cref="Edges"/> so a move invalidates the outline instead of the filled selection.
+/// Pointer bursts still post at most one paint per <see cref="OverlayFrameGate"/> frame.
 /// </summary>
 public static class SelectionGeometry
 {
     /// <summary>Black overlay alpha used by the selection backdrop. Matches the previous <c>Color.FromArgb(100, 0, 0, 0)</c> dim.</summary>
     public const byte OverlayAlpha = 100;
+
+    /// <summary>DIP thickness of each selection edge. Layout bounds stay on the perimeter.</summary>
+    public const double EdgeThickness = 2;
 
     public static (double X, double Y) Clamp(double x, double y, double width, double height)
     {
@@ -83,6 +86,23 @@ public static class SelectionGeometry
 
     public static (double Width, double Height) MeasuredPixels(double dipWidth, double dipHeight, double dpiScale) =>
         (Math.Round(dipWidth * dpiScale), Math.Round(dipHeight * dpiScale));
+
+    /// <summary>
+    /// Four filled edge strips. Their combined area grows with the perimeter, not the selection area,
+    /// so dragging a large region does not re-rasterize the interior.
+    /// </summary>
+    public static SelectionRect[] Edges(SelectionRect rect, double thickness = EdgeThickness)
+    {
+        if (rect.IsEmpty || thickness <= 0) return [];
+        var inset = Math.Min(thickness, Math.Min(rect.Width, rect.Height));
+        return
+        [
+            new(rect.X, rect.Y, rect.Width, inset),
+            new(rect.Right - inset, rect.Y, inset, rect.Height),
+            new(rect.X, rect.Bottom - inset, rect.Width, inset),
+            new(rect.X, rect.Y, inset, rect.Height)
+        ];
+    }
 }
 
 /// <summary>

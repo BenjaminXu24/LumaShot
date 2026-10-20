@@ -39,6 +39,8 @@ internal sealed class AppController
         if (Busy || Quitting) return;
         Busy = true; operation = new(); var token = operation.Token;
         Desktop?.EnableEscape(true); if (Desktop is not null) Desktop.Cancel = Cancel;
+        var log = DiagnosticsLog.DailyPath(Root);
+        var started = Stopwatch.StartNew();
         try
         {
             Notify(mode == 4 ? "框选需要滚动的内容区域" : "正在准备截图…");
@@ -46,41 +48,63 @@ internal sealed class AppController
             foreach (Window window in Application.Current.Windows)
                 if (window.IsVisible && window.WindowState != WindowState.Minimized && window is MainWindow or EditorWindow) hidden.Add(window);
             foreach (var window in hidden) window.Hide();
+            var hiddenMs = started.ElapsedMilliseconds;
             await Task.Delay(Math.Clamp(Preferences.Delay, 0, 5) * 1000 + 200, token);
+            DiagnosticsLog.Write(log, $"热键等待 {started.ElapsedMilliseconds}ms（隐藏窗口 {hiddenMs}ms）模式={mode}");
             PixelFrame? result; var label = new[] { "区域截图", "窗口截图", "全屏截图", "滚动长截图" }[mode - 1];
-            if (mode == 3) result = Native.Capture(Native.PointerDisplay());
+            if (mode == 3)
+            {
+                var screen = Native.PointerDisplay();
+                var grab = Stopwatch.StartNew();
+                result = Native.Capture(screen);
+                DiagnosticsLog.Write(log, $"全屏抓取 {screen.Width}×{screen.Height}@{screen.X},{screen.Y} {grab.ElapsedMilliseconds}ms");
+            }
             else
             {
                 selectionTask = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                var log = Path.Combine(Root, "overlay-diagnostics.log");
-                var started = Stopwatch.StartNew();
                 // BitBlt plus the dim copy touch every screen pixel. Keep that off the UI thread so the cursor still moves before the overlay opens.
                 var prepared = await Task.Run(() =>
                 {
+                    var windowWatch = Stopwatch.StartNew();
                     var found = Native.Windows();
-                    var shots = new List<(PixelRect Display, PixelFrame Frame, PixelFrame Dimmed)>();
+                    var windowsMs = windowWatch.ElapsedMilliseconds;
+                    var shots = new List<(PixelRect Display, PixelFrame Frame, PixelFrame Dimmed, long GrabMs, long DimMs)>();
                     foreach (var screen in Native.Displays())
                     {
                         token.ThrowIfCancellationRequested();
+                        var grabWatch = Stopwatch.StartNew();
                         var frame = Native.Capture(screen);
-                        shots.Add((screen, frame, frame.Dimmed(SelectionGeometry.OverlayAlpha)));
+                        var grabMs = grabWatch.ElapsedMilliseconds;
+                        var dimWatch = Stopwatch.StartNew();
+                        shots.Add((screen, frame, frame.Dimmed(SelectionGeometry.OverlayAlpha), grabMs, dimWatch.ElapsedMilliseconds));
                     }
-                    return (Targets: found, Shots: shots);
+                    return (Targets: found, Shots: shots, WindowsMs: windowsMs);
                 }, token);
-                started.Stop();
                 token.ThrowIfCancellationRequested();
-                OverlayDiagnostics.Write(log, $"准备 {started.ElapsedMilliseconds} ms，{prepared.Shots.Count} 块屏幕：" + string.Join("；", prepared.Shots.Select(s => $"{s.Display.Width}×{s.Display.Height}@{s.Display.X},{s.Display.Y}")));
+                DiagnosticsLog.Write(log, $"枚举窗口 数量={prepared.Targets.Count} 耗时={prepared.WindowsMs}ms");
+                foreach (var shot in prepared.Shots)
+                    DiagnosticsLog.Write(log, $"抓屏 {shot.Display.Width}×{shot.Display.Height}@{shot.Display.X},{shot.Display.Y} 抓取={shot.GrabMs}ms 压暗={shot.DimMs}ms");
                 foreach (var shot in prepared.Shots)
                 {
                     var window = new SelectionWindow(shot.Display, shot.Frame, prepared.Targets, mode, shot.Dimmed, log);
                     window.Selected += value => selectionTask?.TrySetResult(value); overlays.Add(window);
                 }
+                var showWatch = Stopwatch.StartNew();
                 foreach (var window in overlays) window.Show();
+                var showMs = showWatch.ElapsedMilliseconds;
+                Native.GetCursorPos(out var cursor);
+                var focus = overlays.FirstOrDefault(window => window.ContainsScreenPoint(cursor.X, cursor.Y)) ?? (overlays.Count > 0 ? overlays[0] : null);
+                focus?.FocusForInput();
+                DiagnosticsLog.Write(log, $"叠加层显示 数量={overlays.Count} 耗时={showMs}ms");
                 var selected = await selectionTask.Task; selectionTask = null;
+                var afterUp = Stopwatch.StartNew();
                 CloseOverlays(); token.ThrowIfCancellationRequested();
-                if (selected is null) { Notify("已取消截图"); return; }
+                if (selected is null) { DiagnosticsLog.Write(log, $"选区返回 取消 {afterUp.ElapsedMilliseconds}ms"); Notify("已取消截图"); return; }
                 if (selected.TargetWindow != 0) Native.SetForegroundWindow(selected.TargetWindow);
-                await Task.Delay(150, token); result = Native.Capture(selected.Bounds);
+                await Task.Delay(150, token);
+                var finalGrab = Stopwatch.StartNew();
+                result = Native.Capture(selected.Bounds);
+                DiagnosticsLog.Write(log, $"选区返回 最终抓取={result.Width}×{result.Height} 抓取={finalGrab.ElapsedMilliseconds}ms 抬起至结果={afterUp.ElapsedMilliseconds}ms");
                 if (mode == 4)
                 {
                     var completion = new TaskCompletionSource<PixelFrame?>(TaskCreationOptions.RunContinuationsAsynchronously);
