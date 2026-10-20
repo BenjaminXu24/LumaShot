@@ -168,6 +168,21 @@ internal static class Native
     {
         if (rect.Width <= 0 || rect.Height <= 0 || (long)rect.Width * rect.Height > PixelFrame.MaximumPixels)
             throw new InvalidOperationException("截图区域过大，请缩小到 8,000 万像素以内。");
+        // BitBlt of a sub-rectangle of the desktop DC is a slow GDI path on some drivers
+        // (several seconds for a few hundred rows) while a full-monitor blit stays under a frame.
+        // Always blit whole monitors, then crop. An exact monitor rect keeps the direct blit.
+        var displays = Displays();
+        if (displays.Contains(rect)) return CaptureScreen(rect);
+        var shots = new List<MonitorBitmap>();
+        foreach (var display in displays)
+        {
+            if (display.Right <= rect.X || rect.Right <= display.X || display.Bottom <= rect.Y || rect.Bottom <= display.Y) continue;
+            shots.Add(new(display.X, display.Y, display.Width, display.Height, CaptureScreen(display)));
+        }
+        return ScreenCrop.FromMonitors(shots, rect.X, rect.Y, rect.Width, rect.Height);
+    }
+    private static PixelFrame CaptureScreen(PixelRect rect)
+    {
         var source = GetDC(0); if (source == 0) throw new Win32Exception("无法读取当前桌面。");
         var dc = CreateCompatibleDC(source); nint bitmap = 0, old = 0;
         try

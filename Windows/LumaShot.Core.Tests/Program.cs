@@ -197,4 +197,43 @@ Test("Duration summary reports average, max, and p95", () =>
     var twenty = DurationSummary.FromMilliseconds(Enumerable.Range(1, 20).Select(value => (double)value).ToArray());
     Check(twenty.Max == 20 && twenty.P95 == 19, "Twenty-sample p95 mismatch.");
 });
+PixelFrame Paint(int width, int height, Func<int, int, byte> blue)
+{
+    var pixels = new byte[width * height * 4];
+    for (var y = 0; y < height; y++) for (var x = 0; x < width; x++)
+    {
+        var p = (y * width + x) * 4;
+        pixels[p] = blue(x, y); pixels[p + 1] = (byte)(x + 1); pixels[p + 2] = (byte)(y + 1); pixels[p + 3] = 255;
+    }
+    return new(width, height, pixels);
+}
+byte Blue(PixelFrame frame, int x, int y) => frame.Pixels[(y * frame.Width + x) * 4];
+Test("Screen crop maps one monitor, including a negative origin", () =>
+{
+    var primary = Paint(4, 3, (x, y) => (byte)(10 + x + y * 4));
+    var cropped = ScreenCrop.FromMonitors([new(0, 0, 4, 3, primary)], 1, 1, 2, 1);
+    Check(cropped.Width == 2 && cropped.Height == 1, "Primary crop size changed.");
+    Check(Blue(cropped, 0, 0) == Blue(primary, 1, 1) && Blue(cropped, 1, 0) == Blue(primary, 2, 1), "Primary crop missed its pixels.");
+    Check(primary.Pixels[(1 * 4 + 1) * 4] == 10 + 1 + 4, "Crop mutated the source bitmap.");
+    var left = Paint(8, 2, (x, y) => (byte)(100 + x + y));
+    var fromNegative = ScreenCrop.FromMonitors([new(-1920, 0, 8, 2, left)], -1916, 1, 3, 1);
+    Check(Blue(fromNegative, 0, 0) == Blue(left, 4, 1) && Blue(fromNegative, 2, 0) == Blue(left, 6, 1), "Negative origin mapped to the wrong bitmap column.");
+});
+Test("Screen crop stitches a selection that crosses monitors", () =>
+{
+    var left = Paint(8, 4, (x, y) => 1);
+    var right = Paint(8, 4, (x, y) => 2);
+    for (var x = 5; x < 8; x++) left.Pixels[(1 * 8 + x) * 4] = (byte)(20 + x);
+    for (var x = 0; x < 3; x++) right.Pixels[(1 * 8 + x) * 4] = (byte)(30 + x);
+    var monitors = new[] { new MonitorBitmap(-8, 0, 8, 4, left), new MonitorBitmap(0, 0, 8, 4, right) };
+    var spanned = ScreenCrop.FromMonitors(monitors, -3, 1, 6, 1);
+    Check(spanned.Width == 6 && spanned.Height == 1, "Spanned crop size changed.");
+    Check(Blue(spanned, 0, 0) == 25 && Blue(spanned, 1, 0) == 26 && Blue(spanned, 2, 0) == 27, "Left side of the span came from the wrong monitor.");
+    Check(Blue(spanned, 3, 0) == 30 && Blue(spanned, 4, 0) == 31 && Blue(spanned, 5, 0) == 32, "Right side of the span came from the wrong monitor.");
+    var outside = ScreenCrop.FromMonitors(monitors, -2, -1, 2, 2);
+    Check(Blue(outside, 0, 0) == 0 && outside.Pixels[3] == 255, "Off-monitor pixel was not opaque black.");
+    Check(Blue(outside, 0, 1) == Blue(left, 6, 0) && Blue(outside, 1, 1) == Blue(left, 7, 0), "The on-monitor row of a partial crop moved.");
+    var onlyLeft = ScreenCrop.FromMonitors(monitors, -8, 0, 1, 1);
+    Check(Blue(onlyLeft, 0, 0) == Blue(left, 0, 0), "A selection on the left monitor read the right bitmap.");
+});
 Console.WriteLine($"{passed} core checks passed.");

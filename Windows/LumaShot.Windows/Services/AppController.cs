@@ -100,15 +100,14 @@ internal sealed class AppController
                 var afterUp = Stopwatch.StartNew();
                 CloseOverlays(); token.ThrowIfCancellationRequested();
                 if (selected is null) { DiagnosticsLog.Write(log, $"选区返回 取消 {afterUp.ElapsedMilliseconds}ms"); Notify("已取消截图"); return; }
-                if (selected.TargetWindow != 0) Native.SetForegroundWindow(selected.TargetWindow);
-                await Task.Delay(150, token);
-                var finalGrab = Stopwatch.StartNew();
-                result = Native.Capture(selected.Bounds);
-                DiagnosticsLog.Write(log, $"选区返回 最终抓取={result.Width}×{result.Height} 抓取={finalGrab.ElapsedMilliseconds}ms 抬起至结果={afterUp.ElapsedMilliseconds}ms");
+                var cropWatch = Stopwatch.StartNew();
+                var monitors = prepared.Shots.Select(shot => new MonitorBitmap(shot.Display.X, shot.Display.Y, shot.Display.Width, shot.Display.Height, shot.Frame)).ToArray();
+                result = ScreenCrop.FromMonitors(monitors, selected.Bounds.X, selected.Bounds.Y, selected.Bounds.Width, selected.Bounds.Height);
+                DiagnosticsLog.Write(log, $"选区返回 裁剪={result.Width}×{result.Height} 来源=已抓屏 无二次BitBlt 裁剪={cropWatch.ElapsedMilliseconds}ms 抬起至结果={afterUp.ElapsedMilliseconds}ms");
                 if (mode == 4)
                 {
                     var completion = new TaskCompletionSource<PixelFrame?>(TaskCreationOptions.RunContinuationsAsynchronously);
-                    scrolling = new(selected, result); scrolling.Finished += frame => completion.TrySetResult(frame);
+                    scrolling = new(selected, result, log); scrolling.Finished += frame => completion.TrySetResult(frame);
                     scrolling.StartAutomatic(); result = await completion.Task;
                     scrolling.Dispose(); scrolling = null; token.ThrowIfCancellationRequested();
                 }

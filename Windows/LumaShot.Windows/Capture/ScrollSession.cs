@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
@@ -11,6 +12,7 @@ internal sealed class ScrollSession : IDisposable
 {
     private readonly Selection selection;
     private readonly ImageStitcher stitcher;
+    private readonly string? diagnosticLog;
     private readonly ScrollControls controls;
     private readonly SemaphoreSlim frameLock = new(1, 1);
     private CancellationTokenSource? automatic;
@@ -22,9 +24,9 @@ internal sealed class ScrollSession : IDisposable
     public string Status => controls.Status.Text;
     public event Action<PixelFrame?>? Finished;
 
-    public ScrollSession(Selection selection, PixelFrame first)
+    public ScrollSession(Selection selection, PixelFrame first, string? diagnosticLog = null)
     {
-        this.selection = selection; stitcher = new(first); Native.GetCursorPos(out originalCursor);
+        this.selection = selection; this.diagnosticLog = diagnosticLog; stitcher = new(first); Native.GetCursorPos(out originalCursor);
         controls = new ScrollControls();
         controls.Add.Click += async (_, _) => await AddFrame(false);
         controls.Automatic.Click += (_, _) => { if (IsAutomatic) Pause("已暂停，可手动向下滚动约半屏，再添加当前屏"); else StartAutomatic(); };
@@ -84,7 +86,9 @@ internal sealed class ScrollSession : IDisposable
             // our small control panel while capturing, including full-screen crops.
             controls.Hide(); await Task.Delay(80);
             if (ended) return null;
+            var grab = Stopwatch.StartNew();
             var frame = Native.Capture(selection.Bounds);
+            DiagnosticsLog.Write(diagnosticLog, $"滚动抓取 {frame.Width}×{frame.Height} {grab.ElapsedMilliseconds}ms 方式=整屏后裁剪");
             var result = await Task.Run(() => stitcher.Append(frame));
             if (ended) return null;
             UpdateCounts();
