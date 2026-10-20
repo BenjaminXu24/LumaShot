@@ -79,4 +79,66 @@ Test("Undo and redo restore complete edits", () => {
 Test("New edit invalidates redo branch", () => { var doc = new AnnotationDocument(); var a = new Annotation(AnnotationTool.Number, [new(10,10)]); doc.Add(a); doc.Undo(); doc.Add(a with { Number = 2 }); Check(!doc.CanRedo, "Stale redo branch retained."); });
 Test("Snapshot does not alias caller arrays", () => { var points = new ImagePoint[] { new(1,2),new(3,4) }; var doc = new AnnotationDocument(); doc.Add(new(AnnotationTool.Pen, points)); points[0] = new(99,99); Check(doc.Items[0].Points[0] == new ImagePoint(1,2), "Caller mutated document."); });
 Test("Delete and clear remain undoable", () => { var doc = new AnnotationDocument(); var a = new Annotation(AnnotationTool.Text, [new(2,3)], Text:"hello"); doc.Add(a); doc.Delete(a.Id); doc.Undo(); Check(doc.Items.Count == 1,"Delete not undoable."); doc.Clear(); doc.Undo(); Check(doc.Items.Count == 1,"Clear not undoable."); });
+Test("Drag normalizes, clamps, and matches either direction", () =>
+{
+    var forward = SelectionGeometry.FromDrag(10, 20, 110, 70, 800, 600);
+    var backward = SelectionGeometry.FromDrag(110, 70, 10, 20, 800, 600);
+    Check(forward == backward && forward == new SelectionRect(10, 20, 100, 50), "Drag rectangle changed with direction.");
+    var clamped = SelectionGeometry.FromDrag(10, 10, -50, 900, 200, 100);
+    Check(clamped == new SelectionRect(0, 10, 10, 90), "Drag left the surface.");
+});
+Test("Off-screen window highlight is clipped to the monitor", () =>
+{
+    var visible = SelectionGeometry.Visible(new(-20, -10, 100, 40), 200, 100);
+    Check(visible == new SelectionRect(0, 0, 80, 30), "Visible intersection mismatch.");
+    Check(SelectionGeometry.Visible(new(300, 300, 10, 10), 200, 100).IsEmpty, "Off-screen highlight survived.");
+});
+Test("Preview crop tracks the selection instead of the full frame", () =>
+{
+    var crop = SelectionGeometry.PreviewCrop(new(10, 20, 30, 40), 1920, 1080, 3840, 2160);
+    Check(crop == new PixelCrop(20, 40, 60, 80), "200% crop mismatch.");
+    Check((long)crop.Width * crop.Height * 100 < (long)3840 * 2160, "Crop covers the frame.");
+    var fractional = SelectionGeometry.PreviewCrop(new(10.5, 0, 10, 10), 100, 100, 150, 150);
+    Check(fractional == new PixelCrop(15, 0, 16, 15), "150% crop mismatch.");
+    var edge = SelectionGeometry.Visible(new(90, 40, 30, 20), 100, 50);
+    Check(edge == new SelectionRect(90, 40, 10, 10), "Edge intersection mismatch.");
+    Check(SelectionGeometry.PreviewCrop(edge, 100, 50, 100, 50) == new PixelCrop(90, 40, 10, 10), "Edge crop mismatch.");
+    Check(SelectionGeometry.PreviewCrop(new(0, 0, 10, 10), 0, 100, 100, 100).IsEmpty, "Zero surface still cropped.");
+});
+Test("Capture pixels keep the overlay commit rounding", () =>
+{
+    var pixels = SelectionGeometry.ToCapturePixels(100, 100, 320, 250);
+    Check(pixels == new CapturePixels(100, 100, 220, 150), "Integer drag changed size.");
+    pixels = SelectionGeometry.ToCapturePixels(100.2, 100.6, 320.4, 250.2);
+    Check(pixels == new CapturePixels(100, 100, 220, 150), "Fractional screen points drifted.");
+    Check(!SelectionGeometry.IsTooSmall(3, 3) && SelectionGeometry.IsTooSmall(2.9, 40), "Minimum drag size changed.");
+    Check(SelectionGeometry.IsScrollTooSmall(23, 40) && SelectionGeometry.IsScrollTooSmall(24, 39) && !SelectionGeometry.IsScrollTooSmall(24, 40), "Scroll minimum changed.");
+    Check(SelectionGeometry.MeasuredPixels(960, 540, 2) == (1920, 1080), "DPI label scale changed.");
+});
+Test("Pointer bursts schedule one overlay frame", () =>
+{
+    var gate = new OverlayFrameGate();
+    var scheduled = 0;
+    SelectionRect latest = default;
+    for (var i = 0; i < 40; i++)
+    {
+        latest = SelectionGeometry.FromDrag(5, 5, 10 + i, 8 + i, 800, 600);
+        if (gate.Request()) scheduled++;
+    }
+    Check(scheduled == 1 && gate.IsPending, "Each move posted a frame.");
+    Check(latest == new SelectionRect(5, 5, 44, 42), "Latest point was dropped.");
+    gate.Release();
+    Check(!gate.IsPending && gate.Request(), "Gate stayed closed.");
+});
+Test("Dim overlay darkens a copy and stays opaque", () =>
+{
+    var source = new PixelFrame(2, 1, [255, 0, 0, 10, 10, 20, 30, 0]);
+    var dimmed = source.Dimmed(SelectionGeometry.OverlayAlpha);
+    Check(SelectionGeometry.OverlayAlpha == 100, "Overlay alpha drifted.");
+    Check(dimmed.Width == 2 && dimmed.Height == 1, "Dimmed size changed.");
+    Check(dimmed.Pixels is [155, 0, 0, 255, 6, 12, 18, 255], "Dimmed color mismatch.");
+    Check(source.Pixels is [255, 0, 0, 10, 10, 20, 30, 0], "Dimmed mutated the source.");
+    var clear = source.Dimmed(0);
+    Check(clear.Pixels is [255, 0, 0, 255, 10, 20, 30, 255], "Zero overlay changed RGB.");
+});
 Console.WriteLine($"{passed} core checks passed.");

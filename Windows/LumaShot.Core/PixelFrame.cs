@@ -53,4 +53,23 @@ public sealed class PixelFrame
         }
         return new(outputWidth, bottom - top, result);
     }
+
+    /// <summary>
+    /// Copy darkened by a black overlay of <paramref name="alpha"/> (0 keeps RGB, 255 is black).
+    /// Rounded as <c>(source * (255 - alpha) + 127) / 255</c>. Output alpha is 255 so the backdrop stays opaque.
+    /// </summary>
+    public PixelFrame Dimmed(byte alpha)
+    {
+        var keep = 255 - alpha;
+        var pixels = new byte[Pixels.Length];
+        var source = Pixels;
+        for (var i = 0; i < pixels.Length; i += 4)
+        {
+            pixels[i] = (byte)((source[i] * keep + 127) / 255);
+            pixels[i + 1] = (byte)((source[i + 1] * keep + 127) / 255);
+            pixels[i + 2] = (byte)((source[i + 2] * keep + 127) / 255);
+            pixels[i + 3] = 255;
+        }
+        return new(Width, Height, pixels);
+    }
 }

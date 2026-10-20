@@ -51,11 +51,28 @@ internal sealed class AppController
             if (mode == 3) result = Native.Capture(Native.PointerDisplay());
             else
             {
-                var targets = Native.Windows();
                 selectionTask = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                foreach (var display in Native.Displays())
+                var log = Path.Combine(Root, "overlay-diagnostics.log");
+                var started = Stopwatch.StartNew();
+                // BitBlt plus the dim copy touch every screen pixel. Keep that off the UI thread so the cursor still moves before the overlay opens.
+                var prepared = await Task.Run(() =>
                 {
-                    var window = new SelectionWindow(display, Native.Capture(display), targets, mode);
+                    var found = Native.Windows();
+                    var shots = new List<(PixelRect Display, PixelFrame Frame, PixelFrame Dimmed)>();
+                    foreach (var screen in Native.Displays())
+                    {
+                        token.ThrowIfCancellationRequested();
+                        var frame = Native.Capture(screen);
+                        shots.Add((screen, frame, frame.Dimmed(SelectionGeometry.OverlayAlpha)));
+                    }
+                    return (Targets: found, Shots: shots);
+                }, token);
+                started.Stop();
+                token.ThrowIfCancellationRequested();
+                OverlayDiagnostics.Write(log, $"准备 {started.ElapsedMilliseconds} ms，{prepared.Shots.Count} 块屏幕：" + string.Join("；", prepared.Shots.Select(s => $"{s.Display.Width}×{s.Display.Height}@{s.Display.X},{s.Display.Y}")));
+                foreach (var shot in prepared.Shots)
+                {
+                    var window = new SelectionWindow(shot.Display, shot.Frame, prepared.Targets, mode, shot.Dimmed, log);
                     window.Selected += value => selectionTask?.TrySetResult(value); overlays.Add(window);
                 }
                 foreach (var window in overlays) window.Show();
