@@ -6,7 +6,6 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Shapes;
-using System.Windows.Threading;
 using LumaShot.Core;
 using LumaShot.Windows.Platform;
 using LumaShot.Windows.Services;
@@ -27,23 +26,28 @@ internal sealed class SelectionWindow : Window
         return brush;
     }
 
-    private readonly PixelRect display;
-    private readonly IReadOnlyList<DesktopWindow> targets;
-    private readonly int mode;
-    private readonly int pixelWidth;
-    private readonly int pixelHeight;
-    private readonly string? diagnosticLog;
+    private PixelRect display;
+    private IReadOnlyList<DesktopWindow> targets = [];
+    private int mode;
+    private int pixelWidth;
+    private int pixelHeight;
+    private string? diagnosticLog;
     private readonly Grid root;
+    private readonly BackdropImage backdropImage;
+    private readonly BackdropImage previewImage;
+    private readonly RectangleGeometry holeGeometry = new();
     private readonly Canvas chrome;
     private readonly Rectangle[] edges;
     private readonly Ellipse[] handles;
     private readonly Border sizePill;
     private readonly TextBlock sizeText;
+    private readonly TextBlock hintText;
     private readonly Border hint;
-    private readonly OverlayFrameGate gate = new();
     private readonly SampleBuffer handlerSamples = new();
     private readonly SampleBuffer renderSamples = new();
-    private readonly Stopwatch shown = Stopwatch.StartNew();
+    private readonly SampleBuffer presentGaps = new();
+    private readonly SampleBuffer presentLatency = new();
+    private readonly Stopwatch shown = new();
     private Point? start;
     private DesktopWindow? target;
     private Rect region = Rect.Empty;
@@ -51,54 +55,57 @@ internal sealed class SelectionWindow : Window
     private bool paintedValid;
     private bool closed;
     private bool loggedFrame;
+    private bool loggedSummary;
+    private bool trackingFrames;
+    private EventHandler? firstPresent;
     private double dpiScale = 1;
     private string sizeLabel = "";
     private int moveCount;
     private int ignoredMoves;
+    private int presentCount;
     private long firstFrameMs = -1;
+    private long lastPresent;
+    private long awaitingSince;
     public event Action<Selection?>? Selected;
+    internal bool IsUsable => !closed;
+    internal PixelRect BoundDisplay => display;
 
-    public SelectionWindow(PixelRect display, PixelFrame snapshot, IReadOnlyList<DesktopWindow> targets, int mode, PixelFrame? dimmed = null, string? diagnosticLog = null)
+    private SelectionWindow(string? diagnosticLog)
     {
-        this.display = display;
-        this.targets = targets;
-        this.mode = mode;
         this.diagnosticLog = diagnosticLog;
-        pixelWidth = snapshot.Width;
-        pixelHeight = snapshot.Height;
-        if (dimmed is null || dimmed.Width != snapshot.Width || dimmed.Height != snapshot.Height)
-            dimmed = snapshot.Dimmed(SelectionGeometry.OverlayAlpha);
-        var backdrop = ImageCodec.Bitmap(dimmed);
-
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
         ShowActivated = false;
+        AllowsTransparency = false;
         Topmost = true;
         WindowStartupLocation = WindowStartupLocation.Manual;
         Background = Brushes.Black;
         Cursor = Cursors.Cross;
         ForceCursor = true;
         root = new Grid { Background = Brushes.Black };
-        var background = new BackdropImage { Source = backdrop, Stretch = Stretch.Fill, IsHitTestVisible = false, SnapsToDevicePixels = true };
-        RenderOptions.SetBitmapScalingMode(background, BitmapScalingMode.LowQuality);
+        backdropImage = new BackdropImage { Stretch = Stretch.Fill, IsHitTestVisible = false, SnapsToDevicePixels = true };
+        previewImage = new BackdropImage { Stretch = Stretch.Fill, IsHitTestVisible = false, SnapsToDevicePixels = true, Visibility = Visibility.Collapsed, Clip = holeGeometry };
+        RenderOptions.SetBitmapScalingMode(backdropImage, BitmapScalingMode.LowQuality);
+        RenderOptions.SetBitmapScalingMode(previewImage, BitmapScalingMode.LowQuality);
         edges = [Edge(), Edge(), Edge(), Edge()];
         handles = [Handle(), Handle(), Handle(), Handle()];
         sizeText = new TextBlock { Foreground = Brushes.White, FontSize = 13, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         sizePill = Pill(sizeText, 140);
         sizePill.Visibility = Visibility.Collapsed;
-        var hintText = mode == 2 ? "点击选择窗口  ·  Esc / 右键取消" : mode == 4 ? "框选滚动内容，避开固定侧栏  ·  Esc / 右键取消" : "拖动选择区域  ·  Esc / 右键取消";
-        hint = Pill(new TextBlock { Text = hintText, Foreground = Brushes.White, FontSize = 13, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }, 440);
+        hintText = new TextBlock { Foreground = Brushes.White, FontSize = 13, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        hint = Pill(hintText, 440);
         chrome = new Canvas { IsHitTestVisible = false };
         foreach (var edge in edges) chrome.Children.Add(edge);
         foreach (var handle in handles) chrome.Children.Add(handle);
         chrome.Children.Add(sizePill);
         chrome.Children.Add(hint);
-        root.Children.Add(background);
+        root.Children.Add(backdropImage);
+        root.Children.Add(previewImage);
         root.Children.Add(chrome);
         Content = root;
 
-        SourceInitialized += (_, _) => Native.SetWindowPos(new WindowInteropHelper(this).Handle, -1, display.X, display.Y, display.Width, display.Height, 0x0040);
+        SourceInitialized += (_, _) => PlaceOnDisplay();
         Loaded += (_, _) =>
         {
             CacheDpi();
@@ -107,19 +114,6 @@ internal sealed class SelectionWindow : Window
             foreach (Window window in Application.Current.Windows)
                 if (window is SelectionWindow { IsLoaded: true }) loadedPeers++;
             if (loadedPeers <= 1) FocusForInput();
-        };
-        ContentRendered += (_, _) =>
-        {
-            if (loggedFrame) return;
-            loggedFrame = true;
-            firstFrameMs = shown.ElapsedMilliseconds;
-            var dpi = VisualTreeHelper.GetDpi(this);
-            DiagnosticsLog.Write(diagnosticLog,
-                $"叠加层首帧 {firstFrameMs}ms 渲染层={DiagnosticsLog.Tier()} 实际渲染={DiagnosticsLog.ActualRenderMode()} " +
-                $"dpi={dpi.PixelsPerInchX.ToString("0", CultureInfo.InvariantCulture)}/{dpi.PixelsPerInchY.ToString("0", CultureInfo.InvariantCulture)} " +
-                $"scale={dpi.DpiScaleX.ToString("0.###", CultureInfo.InvariantCulture)}×{dpi.DpiScaleY.ToString("0.###", CultureInfo.InvariantCulture)} " +
-                $"窗口DIP={root.ActualWidth.ToString("0", CultureInfo.InvariantCulture)}×{root.ActualHeight.ToString("0", CultureInfo.InvariantCulture)} " +
-                $"位图={pixelWidth}×{pixelHeight} 显示器={display.Width}×{display.Height}@{display.X},{display.Y} 绘制=仅描边");
         };
         DpiChanged += (_, _) => CacheDpi();
         SizeChanged += (_, _) =>
@@ -135,9 +129,93 @@ internal sealed class SelectionWindow : Window
         Closed += (_, _) =>
         {
             closed = true;
+            DetachFirstPresent();
+            EndFrameTracking();
             ReleaseOwner();
             LogSummary("关闭");
         };
+    }
+
+    internal SelectionWindow(PixelRect display, PixelFrame snapshot, IReadOnlyList<DesktopWindow> targets, int mode, PixelFrame? dimmed = null, string? diagnosticLog = null)
+        : this(diagnosticLog)
+    {
+        Bind(display, snapshot, targets, mode, dimmed, diagnosticLog);
+    }
+
+    internal static SelectionWindow CreateShell(PixelRect display, string? diagnosticLog)
+    {
+        var window = new SelectionWindow(diagnosticLog) { display = display };
+        window.EnsureHwnd();
+        return window;
+    }
+
+    internal void Bind(PixelRect display, PixelFrame snapshot, IReadOnlyList<DesktopWindow> targets, int mode, PixelFrame? dimmed, string? diagnosticLog)
+    {
+        this.display = display;
+        this.targets = targets;
+        this.mode = mode;
+        this.diagnosticLog = diagnosticLog;
+        pixelWidth = snapshot.Width;
+        pixelHeight = snapshot.Height;
+        if (dimmed is null || dimmed.Width != snapshot.Width || dimmed.Height != snapshot.Height)
+            dimmed = snapshot.Dimmed(SelectionGeometry.OverlayAlpha);
+        backdropImage.Source = ImageCodec.Bitmap(dimmed);
+        previewImage.Source = ImageCodec.Bitmap(snapshot);
+        hintText.Text = mode == 2 ? "点击选择窗口  ·  Esc / 右键取消" : mode == 4 ? "框选滚动内容，避开固定侧栏  ·  Esc / 右键取消" : "拖动选择区域  ·  Esc / 右键取消";
+        closed = false;
+        loggedFrame = false;
+        loggedSummary = false;
+        start = null;
+        target = null;
+        region = Rect.Empty;
+        painted = Rect.Empty;
+        paintedValid = false;
+        sizeLabel = "";
+        moveCount = 0;
+        ignoredMoves = 0;
+        presentCount = 0;
+        lastPresent = 0;
+        awaitingSince = 0;
+        firstFrameMs = -1;
+        handlerSamples.Clear();
+        renderSamples.Clear();
+        presentGaps.Clear();
+        presentLatency.Clear();
+        ApplyChrome(Rect.Empty);
+        PlaceOnDisplay();
+        shown.Restart();
+    }
+
+    internal void ShowPrepared()
+    {
+        shown.Restart();
+        loggedFrame = false;
+        firstFrameMs = -1;
+        DetachFirstPresent();
+        firstPresent = (_, _) =>
+        {
+            DetachFirstPresent();
+            LogFirstFrame();
+        };
+        CompositionTarget.Rendering += firstPresent;
+        Show();
+        PlaceOnDisplay();
+    }
+
+    /// <summary>Hide a warmed window without destroying its HWND.</summary>
+    internal void Park()
+    {
+        DetachFirstPresent();
+        EndFrameTracking();
+        ReleaseOwner();
+        start = null;
+        target = null;
+        region = Rect.Empty;
+        ApplyChrome(Rect.Empty);
+        backdropImage.Source = null;
+        previewImage.Source = null;
+        LogSummary("收起");
+        Hide();
     }
 
     internal bool ContainsScreenPoint(int x, int y) => display.Contains(x, y);
@@ -147,6 +225,15 @@ internal sealed class SelectionWindow : Window
         if (closed) return;
         Activate();
         Focus();
+    }
+
+    private void EnsureHwnd() => _ = new WindowInteropHelper(this).EnsureHandle();
+
+    private void PlaceOnDisplay()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == 0 || display.Width <= 0 || display.Height <= 0) return;
+        Native.SetWindowPos(hwnd, -1, display.X, display.Y, display.Width, display.Height, 0x0010);
     }
 
     private static Rectangle Edge() => new()
@@ -190,6 +277,7 @@ internal sealed class SelectionWindow : Window
         start = e.GetPosition(root);
         region = Rect.Empty;
         ApplyChrome(region);
+        BeginFrameTracking();
         CaptureMouse();
     }
 
@@ -228,6 +316,7 @@ internal sealed class SelectionWindow : Window
     {
         ReleaseMouseCapture();
         ReleaseOwner();
+        EndFrameTracking();
         LogSummary("鼠标抬起");
         if (mode == 2)
         {
@@ -268,31 +357,63 @@ internal sealed class SelectionWindow : Window
         return true;
     }
 
+    /// <summary>
+    /// Mouse moves only store the latest rectangle. <see cref="CompositionTarget.Rendering"/> applies it once per presented frame,
+    /// so a 300+ Hz pointer does not each schedule its own full-window present.
+    /// </summary>
     private void SchedulePaint()
     {
-        if (closed || !gate.Request()) return;
-        try { Dispatcher.BeginInvoke(DispatcherPriority.Render, PaintFrame); }
-        catch (InvalidOperationException) { gate.Release(); }
+        if (closed) return;
+        if (awaitingSince == 0) awaitingSince = Stopwatch.GetTimestamp();
+        BeginFrameTracking();
     }
 
-    private void PaintFrame()
+    private void BeginFrameTracking()
     {
-        var started = Stopwatch.GetTimestamp();
-        try
+        if (trackingFrames || closed) return;
+        trackingFrames = true;
+        lastPresent = 0;
+        CompositionTarget.Rendering += OnPresent;
+    }
+
+    private void DetachFirstPresent()
+    {
+        if (firstPresent is null) return;
+        CompositionTarget.Rendering -= firstPresent;
+        firstPresent = null;
+    }
+
+    private void EndFrameTracking()
+    {
+        if (!trackingFrames) return;
+        trackingFrames = false;
+        CompositionTarget.Rendering -= OnPresent;
+    }
+
+    private void OnPresent(object? sender, EventArgs e)
+    {
+        if (closed) { EndFrameTracking(); return; }
+        var now = Stopwatch.GetTimestamp();
+        if (lastPresent != 0)
+            presentGaps.Add(Stopwatch.GetElapsedTime(lastPresent, now).TotalMilliseconds);
+        lastPresent = now;
+        presentCount++;
+        if (awaitingSince != 0)
         {
-            if (!closed) ApplyChrome(region);
+            presentLatency.Add(Stopwatch.GetElapsedTime(awaitingSince, now).TotalMilliseconds);
+            awaitingSince = 0;
         }
-        finally
+        if (region != painted || !paintedValid)
         {
+            var started = Stopwatch.GetTimestamp();
+            ApplyChrome(region);
             renderSamples.Add(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
-            gate.Release();
-            if (!closed && region != painted) SchedulePaint();
         }
     }
 
     /// <summary>
-    /// Moves 2px edge strips, handles, and the size label. The dimmed backdrop stays put.
-    /// A selection-sized element would invalidate its whole bounds on every move, which is what made a short drag stall.
+    /// The dimmed screenshot and the un-dimmed screenshot are both full-window images created before the drag.
+    /// A move only changes the un-dimmed image's clip rectangle, plus the 2px border and the size label.
     /// </summary>
     private void ApplyChrome(Rect next)
     {
@@ -300,10 +421,23 @@ internal sealed class SelectionWindow : Window
         paintedValid = true;
         if (next.IsEmpty || next.Width <= 0 || next.Height <= 0)
         {
+            holeGeometry.Rect = Rect.Empty;
+            previewImage.Visibility = Visibility.Collapsed;
             foreach (var edge in edges) edge.Visibility = Visibility.Collapsed;
             sizePill.Visibility = Visibility.Collapsed;
             foreach (var handle in handles) handle.Visibility = Visibility.Collapsed;
             return;
+        }
+        var visible = SelectionGeometry.Visible(new(next.X, next.Y, next.Width, next.Height), root.ActualWidth, root.ActualHeight);
+        if (visible.IsEmpty)
+        {
+            holeGeometry.Rect = Rect.Empty;
+            previewImage.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            holeGeometry.Rect = new Rect(visible.X, visible.Y, visible.Width, visible.Height);
+            previewImage.Visibility = Visibility.Visible;
         }
         var parts = SelectionGeometry.Edges(new(next.X, next.Y, next.Width, next.Height));
         for (var i = 0; i < edges.Length; i++)
@@ -352,13 +486,37 @@ internal sealed class SelectionWindow : Window
         Canvas.SetTop(hint, 25);
     }
 
+    private void LogFirstFrame()
+    {
+        if (loggedFrame) return;
+        loggedFrame = true;
+        firstFrameMs = shown.ElapsedMilliseconds;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var hwnd = new WindowInteropHelper(this).Handle;
+        DiagnosticsLog.Write(diagnosticLog,
+            $"叠加层首帧 {firstFrameMs}ms 渲染层={DiagnosticsLog.Tier()} 实际渲染={DiagnosticsLog.ActualRenderMode()} " +
+            $"透明窗口={(AllowsTransparency ? "是" : "否")} 分层窗口={(Native.IsLayeredWindow(hwnd) ? "是" : "否")} " +
+            $"dpi={dpi.PixelsPerInchX.ToString("0", CultureInfo.InvariantCulture)}/{dpi.PixelsPerInchY.ToString("0", CultureInfo.InvariantCulture)} " +
+            $"scale={dpi.DpiScaleX.ToString("0.###", CultureInfo.InvariantCulture)}×{dpi.DpiScaleY.ToString("0.###", CultureInfo.InvariantCulture)} " +
+            $"窗口DIP={root.ActualWidth.ToString("0", CultureInfo.InvariantCulture)}×{root.ActualHeight.ToString("0", CultureInfo.InvariantCulture)} " +
+            $"位图={pixelWidth}×{pixelHeight} 显示器={display.Width}×{display.Height}@{display.X},{display.Y} 绘制=压暗底图+选区原图");
+    }
+
     private void LogSummary(string stage)
     {
+        if (loggedSummary || string.IsNullOrWhiteSpace(diagnosticLog)) return;
+        loggedSummary = true;
+        var hwnd = new WindowInteropHelper(this).Handle;
         DiagnosticsLog.Write(diagnosticLog,
             $"选区{stage} 显示器={display.Width}×{display.Height}@{display.X},{display.Y} " +
             $"窗口DIP={root.ActualWidth.ToString("0", CultureInfo.InvariantCulture)}×{root.ActualHeight.ToString("0", CultureInfo.InvariantCulture)} " +
             $"位图={pixelWidth}×{pixelHeight} 首帧={(firstFrameMs < 0 ? "未到" : firstFrameMs + "ms")} " +
-            $"移动={moveCount} 忽略={ignoredMoves} {DiagnosticsLog.Stats("处理", handlerSamples.Count, handlerSamples.Snapshot())} {DiagnosticsLog.Stats("绘制", renderSamples.Count, renderSamples.Snapshot())}");
+            $"透明窗口={(AllowsTransparency ? "是" : "否")} 分层窗口={(Native.IsLayeredWindow(hwnd) ? "是" : "否")} " +
+            $"移动={moveCount} 忽略={ignoredMoves} 呈现帧={presentCount} " +
+            $"{DiagnosticsLog.Stats("处理", handlerSamples.Count, handlerSamples.Snapshot())} " +
+            $"{DiagnosticsLog.Stats("绘制", renderSamples.Count, renderSamples.Snapshot())} " +
+            $"{DiagnosticsLog.Stats("呈现间隔", presentGaps.Count, presentGaps.Snapshot())} " +
+            $"{DiagnosticsLog.Stats("移动到呈现", presentLatency.Count, presentLatency.Snapshot())}");
     }
 
     /// <summary>Desired size follows the overlay slot, never the full-resolution bitmap.</summary>
@@ -380,6 +538,7 @@ internal sealed class SelectionWindow : Window
             next = (next + 1) % values.Length;
             Count++;
         }
+        public void Clear() { Count = 0; next = 0; }
         public double[] Snapshot()
         {
             var retained = Math.Min(Count, values.Length);

@@ -52,6 +52,11 @@ public partial class App : Application
                     if (window.IsLoaded) window.InvalidateVisual();
                 });
             };
+            void QueueWarm() => window.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
+            {
+                try { controller.WarmOverlays(); } catch (Exception) { }
+            });
+            QueueWarm();
             if (!e.Args.Contains("--background")) window.Show();
             Exit += (_, _) => { controller.Desktop.Dispose(); instance.Dispose(); };
         }
