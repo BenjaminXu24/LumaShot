@@ -79,4 +79,161 @@ Test("Undo and redo restore complete edits", () => {
 Test("New edit invalidates redo branch", () => { var doc = new AnnotationDocument(); var a = new Annotation(AnnotationTool.Number, [new(10,10)]); doc.Add(a); doc.Undo(); doc.Add(a with { Number = 2 }); Check(!doc.CanRedo, "Stale redo branch retained."); });
 Test("Snapshot does not alias caller arrays", () => { var points = new ImagePoint[] { new(1,2),new(3,4) }; var doc = new AnnotationDocument(); doc.Add(new(AnnotationTool.Pen, points)); points[0] = new(99,99); Check(doc.Items[0].Points[0] == new ImagePoint(1,2), "Caller mutated document."); });
 Test("Delete and clear remain undoable", () => { var doc = new AnnotationDocument(); var a = new Annotation(AnnotationTool.Text, [new(2,3)], Text:"hello"); doc.Add(a); doc.Delete(a.Id); doc.Undo(); Check(doc.Items.Count == 1,"Delete not undoable."); doc.Clear(); doc.Undo(); Check(doc.Items.Count == 1,"Clear not undoable."); });
+Test("Drag normalizes, clamps, and matches either direction", () =>
+{
+    var forward = SelectionGeometry.FromDrag(10, 20, 110, 70, 800, 600);
+    var backward = SelectionGeometry.FromDrag(110, 70, 10, 20, 800, 600);
+    Check(forward == backward && forward == new SelectionRect(10, 20, 100, 50), "Drag rectangle changed with direction.");
+    var clamped = SelectionGeometry.FromDrag(10, 10, -50, 900, 200, 100);
+    Check(clamped == new SelectionRect(0, 10, 10, 90), "Drag left the surface.");
+});
+Test("Off-screen window highlight is clipped to the monitor", () =>
+{
+    var visible = SelectionGeometry.Visible(new(-20, -10, 100, 40), 200, 100);
+    Check(visible == new SelectionRect(0, 0, 80, 30), "Visible intersection mismatch.");
+    Check(SelectionGeometry.Visible(new(300, 300, 10, 10), 200, 100).IsEmpty, "Off-screen highlight survived.");
+});
+Test("Preview crop tracks the selection instead of the full frame", () =>
+{
+    var crop = SelectionGeometry.PreviewCrop(new(10, 20, 30, 40), 1920, 1080, 3840, 2160);
+    Check(crop == new PixelCrop(20, 40, 60, 80), "200% crop mismatch.");
+    Check((long)crop.Width * crop.Height * 100 < (long)3840 * 2160, "Crop covers the frame.");
+    var fractional = SelectionGeometry.PreviewCrop(new(10.5, 0, 10, 10), 100, 100, 150, 150);
+    Check(fractional == new PixelCrop(15, 0, 16, 15), "150% crop mismatch.");
+    var edge = SelectionGeometry.Visible(new(90, 40, 30, 20), 100, 50);
+    Check(edge == new SelectionRect(90, 40, 10, 10), "Edge intersection mismatch.");
+    Check(SelectionGeometry.PreviewCrop(edge, 100, 50, 100, 50) == new PixelCrop(90, 40, 10, 10), "Edge crop mismatch.");
+    Check(SelectionGeometry.PreviewCrop(new(0, 0, 10, 10), 0, 100, 100, 100).IsEmpty, "Zero surface still cropped.");
+});
+Test("Capture pixels keep the overlay commit rounding", () =>
+{
+    var pixels = SelectionGeometry.ToCapturePixels(100, 100, 320, 250);
+    Check(pixels == new CapturePixels(100, 100, 220, 150), "Integer drag changed size.");
+    pixels = SelectionGeometry.ToCapturePixels(100.2, 100.6, 320.4, 250.2);
+    Check(pixels == new CapturePixels(100, 100, 220, 150), "Fractional screen points drifted.");
+    Check(!SelectionGeometry.IsTooSmall(3, 3) && SelectionGeometry.IsTooSmall(2.9, 40), "Minimum drag size changed.");
+    Check(SelectionGeometry.IsScrollTooSmall(23, 40) && SelectionGeometry.IsScrollTooSmall(24, 39) && !SelectionGeometry.IsScrollTooSmall(24, 40), "Scroll minimum changed.");
+    Check(SelectionGeometry.MeasuredPixels(960, 540, 2) == (1920, 1080), "DPI label scale changed.");
+});
+Test("Pointer bursts schedule one overlay frame", () =>
+{
+    var gate = new OverlayFrameGate();
+    var scheduled = 0;
+    SelectionRect latest = default;
+    for (var i = 0; i < 40; i++)
+    {
+        latest = SelectionGeometry.FromDrag(5, 5, 10 + i, 8 + i, 800, 600);
+        if (gate.Request()) scheduled++;
+    }
+    Check(scheduled == 1 && gate.IsPending, "Each move posted a frame.");
+    Check(latest == new SelectionRect(5, 5, 44, 42), "Latest point was dropped.");
+    gate.Release();
+    Check(!gate.IsPending && gate.Request(), "Gate stayed closed.");
+});
+Test("Dim overlay darkens a copy and stays opaque", () =>
+{
+    var source = new PixelFrame(2, 1, [255, 0, 0, 10, 10, 20, 30, 0]);
+    var dimmed = source.Dimmed(SelectionGeometry.OverlayAlpha);
+    Check(SelectionGeometry.OverlayAlpha == 100, "Overlay alpha drifted.");
+    Check(dimmed.Width == 2 && dimmed.Height == 1, "Dimmed size changed.");
+    Check(dimmed.Pixels is [155, 0, 0, 255, 6, 12, 18, 255], "Dimmed color mismatch.");
+    Check(source.Pixels is [255, 0, 0, 10, 10, 20, 30, 0], "Dimmed mutated the source.");
+    var clear = source.Dimmed(0);
+    Check(clear.Pixels is [255, 0, 0, 255, 10, 20, 30, 255], "Zero overlay changed RGB.");
+});
+Test("Selection chrome is the perimeter, not the filled rectangle", () =>
+{
+    bool Covers(SelectionRect edge, double x, double y) => x >= edge.X && y >= edge.Y && x < edge.Right && y < edge.Bottom;
+    var area = new SelectionRect(0, 0, 800, 600);
+    var edges = SelectionGeometry.Edges(area);
+    Check(edges.Length == 4, "Expected four edges.");
+    var edgeArea = edges.Sum(edge => edge.Width * edge.Height);
+    Check(edgeArea * 20 < area.Width * area.Height, "800×600 edges cover the selection.");
+    Check(edges.All(edge => edge.Width <= SelectionGeometry.EdgeThickness || edge.Height <= SelectionGeometry.EdgeThickness), "An edge is as thick as the selection.");
+    var fullHd = new SelectionRect(0, 0, 1920, 1080);
+    var hdEdges = SelectionGeometry.Edges(fullHd);
+    Check(hdEdges.Sum(edge => edge.Width * edge.Height) * 50 < fullHd.Width * fullHd.Height, "1080p edges cover the selection.");
+    Check(hdEdges.Any(edge => Covers(edge, 0, 0)) && hdEdges.Any(edge => Covers(edge, 1919, 1079)), "A 1080p corner is missing.");
+    Check(!hdEdges.Any(edge => Covers(edge, 960, 540)), "The 1080p interior is part of the chrome.");
+    Check(SelectionGeometry.Edges(default).Length == 0, "Empty selection still has chrome.");
+    Check(SelectionGeometry.EdgeThickness == 2, "Edge thickness drifted.");
+});
+Test("Render flags stay opt-in and arguments win", () =>
+{
+    Check(RenderModeRequest.Resolve(null, null) == RenderModeRequest.Mode.Default, "Missing input changed the default.");
+    Check(RenderModeRequest.Resolve([], "") == RenderModeRequest.Mode.Default, "Empty environment changed the default.");
+    Check(RenderModeRequest.Resolve([], "auto") == RenderModeRequest.Mode.Default, "Auto selected a render mode.");
+    Check(RenderModeRequest.Resolve([], "nope") == RenderModeRequest.Mode.Default, "Unknown environment selected a render mode.");
+    Check(RenderModeRequest.Resolve([], "software") == RenderModeRequest.Mode.Software, "Software environment ignored.");
+    Check(RenderModeRequest.Resolve([], "HARDWARE") == RenderModeRequest.Mode.Hardware, "Hardware environment ignored.");
+    Check(RenderModeRequest.Resolve(["--software-render"], "hardware") == RenderModeRequest.Mode.Software, "Environment beat the flag.");
+    Check(RenderModeRequest.Resolve(["--hardware-render", "--software-render"], null) == RenderModeRequest.Mode.Software, "The last flag did not win.");
+    Check(RenderModeRequest.Resolve(["--software-render", "--hardware-render"], "software") == RenderModeRequest.Mode.Hardware, "The last flag did not win.");
+    Check(RenderModeRequest.Resolve(["--background"], "software") == RenderModeRequest.Mode.Software, "Unrelated argument hid the environment.");
+    Check(RenderModeRequest.EnvironmentVariable == "LUMASHOT_RENDER", "Render environment name changed.");
+});
+Test("Virtual and basic adapters are recognized by name", () =>
+{
+    string[] virtualOrBasic =
+    [
+        "Microsoft Basic Display Adapter", "VMware SVGA 3D", "Microsoft Hyper-V Video",
+        "VirtualBox Graphics Adapter", "Parallels Display Adapter (WDDM)", "QEMU VirtIO GPU",
+        "Red Hat QXL", "Indirect Display Driver", "Remote Display Adapter", "Virtual Display",
+        "Bochs Standard VGA"
+    ];
+    foreach (var name in virtualOrBasic) Check(AdapterNames.IsVirtualOrBasic(name), $"Missed {name}.");
+    foreach (var name in new[] { "NVIDIA GeForce RTX 3060", "Intel(R) UHD Graphics 770", "AMD Radeon RX 6600" })
+        Check(!AdapterNames.IsVirtualOrBasic(name), $"Physical adapter {name} looked virtual.");
+    Check(!AdapterNames.IsVirtualOrBasic(null) && !AdapterNames.IsVirtualOrBasic("  "), "Blank adapter name looked virtual.");
+});
+Test("Duration summary reports average, max, and p95", () =>
+{
+    var empty = DurationSummary.FromMilliseconds([]);
+    Check(empty.Count == 0 && empty.Average == 0 && empty.Max == 0 && empty.P95 == 0, "Empty summary is not zero.");
+    var one = DurationSummary.FromMilliseconds([4]);
+    Check(one.Count == 1 && one.Average == 4 && one.Max == 4 && one.P95 == 4, "Single sample changed.");
+    var ten = DurationSummary.FromMilliseconds([10, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    Check(ten.Count == 10 && Math.Abs(ten.Average - 5.5) < 1e-9 && ten.Max == 10 && ten.P95 == 10, "Ten-sample p95 mismatch.");
+    var twenty = DurationSummary.FromMilliseconds(Enumerable.Range(1, 20).Select(value => (double)value).ToArray());
+    Check(twenty.Max == 20 && twenty.P95 == 19, "Twenty-sample p95 mismatch.");
+});
+PixelFrame Paint(int width, int height, Func<int, int, byte> blue)
+{
+    var pixels = new byte[width * height * 4];
+    for (var y = 0; y < height; y++) for (var x = 0; x < width; x++)
+    {
+        var p = (y * width + x) * 4;
+        pixels[p] = blue(x, y); pixels[p + 1] = (byte)(x + 1); pixels[p + 2] = (byte)(y + 1); pixels[p + 3] = 255;
+    }
+    return new(width, height, pixels);
+}
+byte Blue(PixelFrame frame, int x, int y) => frame.Pixels[(y * frame.Width + x) * 4];
+Test("Screen crop maps one monitor, including a negative origin", () =>
+{
+    var primary = Paint(4, 3, (x, y) => (byte)(10 + x + y * 4));
+    var cropped = ScreenCrop.FromMonitors([new(0, 0, 4, 3, primary)], 1, 1, 2, 1);
+    Check(cropped.Width == 2 && cropped.Height == 1, "Primary crop size changed.");
+    Check(Blue(cropped, 0, 0) == Blue(primary, 1, 1) && Blue(cropped, 1, 0) == Blue(primary, 2, 1), "Primary crop missed its pixels.");
+    Check(primary.Pixels[(1 * 4 + 1) * 4] == 10 + 1 + 4, "Crop mutated the source bitmap.");
+    var left = Paint(8, 2, (x, y) => (byte)(100 + x + y));
+    var fromNegative = ScreenCrop.FromMonitors([new(-1920, 0, 8, 2, left)], -1916, 1, 3, 1);
+    Check(Blue(fromNegative, 0, 0) == Blue(left, 4, 1) && Blue(fromNegative, 2, 0) == Blue(left, 6, 1), "Negative origin mapped to the wrong bitmap column.");
+});
+Test("Screen crop stitches a selection that crosses monitors", () =>
+{
+    var left = Paint(8, 4, (x, y) => 1);
+    var right = Paint(8, 4, (x, y) => 2);
+    for (var x = 5; x < 8; x++) left.Pixels[(1 * 8 + x) * 4] = (byte)(20 + x);
+    for (var x = 0; x < 3; x++) right.Pixels[(1 * 8 + x) * 4] = (byte)(30 + x);
+    var monitors = new[] { new MonitorBitmap(-8, 0, 8, 4, left), new MonitorBitmap(0, 0, 8, 4, right) };
+    var spanned = ScreenCrop.FromMonitors(monitors, -3, 1, 6, 1);
+    Check(spanned.Width == 6 && spanned.Height == 1, "Spanned crop size changed.");
+    Check(Blue(spanned, 0, 0) == 25 && Blue(spanned, 1, 0) == 26 && Blue(spanned, 2, 0) == 27, "Left side of the span came from the wrong monitor.");
+    Check(Blue(spanned, 3, 0) == 30 && Blue(spanned, 4, 0) == 31 && Blue(spanned, 5, 0) == 32, "Right side of the span came from the wrong monitor.");
+    var outside = ScreenCrop.FromMonitors(monitors, -2, -1, 2, 2);
+    Check(Blue(outside, 0, 0) == 0 && outside.Pixels[3] == 255, "Off-monitor pixel was not opaque black.");
+    Check(Blue(outside, 0, 1) == Blue(left, 6, 0) && Blue(outside, 1, 1) == Blue(left, 7, 0), "The on-monitor row of a partial crop moved.");
+    var onlyLeft = ScreenCrop.FromMonitors(monitors, -8, 0, 1, 1);
+    Check(Blue(onlyLeft, 0, 0) == Blue(left, 0, 0), "A selection on the left monitor read the right bitmap.");
+});
 Console.WriteLine($"{passed} core checks passed.");

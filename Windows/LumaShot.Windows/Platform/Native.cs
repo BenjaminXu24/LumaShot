@@ -1,7 +1,9 @@
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using LumaShot.Core;
+using Microsoft.Win32;
 
 namespace LumaShot.Windows.Platform;
 
@@ -35,6 +37,13 @@ internal static class Native
     [DllImport("user32.dll")] internal static extern bool ShowWindow(nint window, int command);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern nint FindWindow(string? className, string title);
     [DllImport("user32.dll")] internal static extern bool SetWindowPos(nint window, nint after, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern nint GetWindowLongPtr(nint window, int index);
+    internal static bool IsLayeredWindow(nint window)
+    {
+        if (window == 0) return false;
+        try { return (GetWindowLongPtr(window, -20) & 0x00080000) != 0; }
+        catch (Exception) { return false; }
+    }
     [DllImport("user32.dll", SetLastError = true)] internal static extern bool RegisterHotKey(nint window, int id, uint modifiers, uint key);
     [DllImport("user32.dll")] internal static extern bool UnregisterHotKey(nint window, int id);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, nint parameter);
@@ -55,6 +64,12 @@ internal static class Native
     [DllImport("gdi32.dll")] private static extern nint CreateDIBSection(nint dc, ref BitmapInfo info, uint usage, out nint bits, nint section, uint offset);
     [DllImport("gdi32.dll", SetLastError = true)] private static extern bool BitBlt(nint target, int x, int y, int width, int height, nint source, int sx, int sy, uint operation);
     [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, Input[] input, int size);
+    [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
+    [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(nint monitor, int dpiType, out uint dpiX, out uint dpiY);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool EnumDisplayDevices(string? device, uint index, nint deviceInfo, uint flags);
+
+    internal readonly record struct MonitorDetails(PixelRect Bounds, int DpiX, int DpiY, double ScaleX, double ScaleY);
+    internal readonly record struct DisplayAdapter(string Name, string? DriverVersion, bool Active, bool VirtualOrBasic);
 
     internal static List<PixelRect> Displays()
     {
@@ -68,6 +83,77 @@ internal static class Native
     {
         GetCursorPos(out var point); var displays = Displays();
         return displays.FirstOrDefault(r => r.Contains(point.X, point.Y), displays[0]);
+    }
+    internal static bool IsRemoteSession()
+    {
+        try { return GetSystemMetrics(0x1000) != 0; }
+        catch (Exception) { return false; }
+    }
+    internal static PixelRect VirtualScreen()
+    {
+        try { return new(GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79)); }
+        catch (Exception) { return default; }
+    }
+    internal static List<MonitorDetails> Monitors()
+    {
+        var monitors = new List<MonitorDetails>();
+        try
+        {
+            MonitorProc callback = (nint monitor, nint dc, ref Rect rect, nint data) =>
+            {
+                var dpiX = 96; var dpiY = 96;
+                try
+                {
+                    if (GetDpiForMonitor(monitor, 0, out var x, out var y) == 0 && x > 0 && y > 0) { dpiX = (int)x; dpiY = (int)y; }
+                }
+                catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { }
+                monitors.Add(new(rect.Pixels, dpiX, dpiY, dpiX / 96.0, dpiY / 96.0));
+                return true;
+            };
+            EnumDisplayMonitors(0, 0, callback, 0);
+        }
+        catch (Exception) { }
+        return monitors;
+    }
+    internal static List<DisplayAdapter> Adapters()
+    {
+        var adapters = new List<DisplayAdapter>();
+        const int size = 4 + (32 + 128) * 2 + 4 + 128 * 2 + 128 * 2;
+        var buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            for (uint index = 0; ; index++)
+            {
+                for (var offset = 0; offset < size; offset += 4) Marshal.WriteInt32(buffer, offset, 0);
+                Marshal.WriteInt32(buffer, size);
+                if (!EnumDisplayDevices(null, index, buffer, 0)) break;
+                var name = ReadUnicode(buffer, 4 + 32 * 2, 128);
+                var flags = Marshal.ReadInt32(buffer, 4 + (32 + 128) * 2);
+                var key = ReadUnicode(buffer, 4 + (32 + 128) * 2 + 4 + 128 * 2, 128);
+                if (string.IsNullOrWhiteSpace(name) || (flags & 0x8) != 0) continue;
+                adapters.Add(new(name, DriverVersion(key), (flags & 0x1) != 0, AdapterNames.IsVirtualOrBasic(name)));
+            }
+        }
+        catch (Exception) { }
+        finally { Marshal.FreeHGlobal(buffer); }
+        return adapters;
+    }
+    private static string ReadUnicode(nint buffer, int byteOffset, int characters)
+    {
+        var text = Marshal.PtrToStringUni(buffer + byteOffset, characters) ?? "";
+        var end = text.IndexOf('\0');
+        return (end < 0 ? text : text[..end]).Trim();
+    }
+    private static string? DriverVersion(string? deviceKey)
+    {
+        try
+        {
+            const string prefix = @"\Registry\Machine\";
+            if (string.IsNullOrWhiteSpace(deviceKey) || !deviceKey.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+            using var key = Registry.LocalMachine.OpenSubKey(deviceKey[prefix.Length..]);
+            return key?.GetValue("DriverVersion") as string;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException) { return null; }
     }
     internal static List<DesktopWindow> Windows()
     {
@@ -89,6 +175,21 @@ internal static class Native
     {
         if (rect.Width <= 0 || rect.Height <= 0 || (long)rect.Width * rect.Height > PixelFrame.MaximumPixels)
             throw new InvalidOperationException("截图区域过大，请缩小到 8,000 万像素以内。");
+        // BitBlt of a sub-rectangle of the desktop DC is a slow GDI path on some drivers
+        // (several seconds for a few hundred rows) while a full-monitor blit stays under a frame.
+        // Always blit whole monitors, then crop. An exact monitor rect keeps the direct blit.
+        var displays = Displays();
+        if (displays.Contains(rect)) return CaptureScreen(rect);
+        var shots = new List<MonitorBitmap>();
+        foreach (var display in displays)
+        {
+            if (display.Right <= rect.X || rect.Right <= display.X || display.Bottom <= rect.Y || rect.Bottom <= display.Y) continue;
+            shots.Add(new(display.X, display.Y, display.Width, display.Height, CaptureScreen(display)));
+        }
+        return ScreenCrop.FromMonitors(shots, rect.X, rect.Y, rect.Width, rect.Height);
+    }
+    private static PixelFrame CaptureScreen(PixelRect rect)
+    {
         var source = GetDC(0); if (source == 0) throw new Win32Exception("无法读取当前桌面。");
         var dc = CreateCompatibleDC(source); nint bitmap = 0, old = 0;
         try

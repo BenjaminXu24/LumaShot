@@ -23,6 +23,7 @@ internal sealed class AppController
     public event Action? Changed;
     private readonly List<EditorWindow> editors = [];
     private readonly List<SelectionWindow> overlays = [];
+    private readonly List<SelectionWindow> pool = [];
     private readonly List<Window> hidden = [];
     private CancellationTokenSource? operation;
     private TaskCompletionSource<Selection?>? selectionTask;
@@ -39,6 +40,8 @@ internal sealed class AppController
         if (Busy || Quitting) return;
         Busy = true; operation = new(); var token = operation.Token;
         Desktop?.EnableEscape(true); if (Desktop is not null) Desktop.Cancel = Cancel;
+        var log = DiagnosticsLog.DailyPath(Root);
+        var started = Stopwatch.StartNew();
         try
         {
             Notify(mode == 4 ? "框选需要滚动的内容区域" : "正在准备截图…");
@@ -46,28 +49,60 @@ internal sealed class AppController
             foreach (Window window in Application.Current.Windows)
                 if (window.IsVisible && window.WindowState != WindowState.Minimized && window is MainWindow or EditorWindow) hidden.Add(window);
             foreach (var window in hidden) window.Hide();
-            await Task.Delay(Math.Clamp(Preferences.Delay, 0, 5) * 1000 + 200, token);
+            var hiddenMs = started.ElapsedMilliseconds;
+            // The old +200ms pad was most of 热键等待. Keep the user's preference, and only a short settle so a hidden window is gone from the desktop.
+            var preferenceMs = Math.Clamp(Preferences.Delay, 0, 5) * 1000;
+            var settleMs = hidden.Count > 0 ? 32 : 0;
+            if (preferenceMs + settleMs > 0) await Task.Delay(preferenceMs + settleMs, token);
+            var afterSettleMs = started.ElapsedMilliseconds;
+            DiagnosticsLog.Write(log, $"热键阶段 隐藏={hiddenMs}ms 偏好={preferenceMs}ms 合成等待={settleMs}ms 到此={afterSettleMs}ms 模式={mode}");
             PixelFrame? result; var label = new[] { "区域截图", "窗口截图", "全屏截图", "滚动长截图" }[mode - 1];
-            if (mode == 3) result = Native.Capture(Native.PointerDisplay());
+            if (mode == 3)
+            {
+                var screen = Native.PointerDisplay();
+                var grab = Stopwatch.StartNew();
+                result = Native.Capture(screen);
+                DiagnosticsLog.Write(log, $"全屏抓取 {screen.Width}×{screen.Height}@{screen.X},{screen.Y} {grab.ElapsedMilliseconds}ms");
+            }
             else
             {
-                var targets = Native.Windows();
                 selectionTask = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                foreach (var display in Native.Displays())
+                var prepared = await Task.Run(() => PrepareShots(token), token);
+                var captureTailMs = started.ElapsedMilliseconds - afterSettleMs;
+                token.ThrowIfCancellationRequested();
+                DiagnosticsLog.Write(log, $"抓屏阶段 {captureTailMs}ms");
+                DiagnosticsLog.Write(log, $"枚举窗口 数量={prepared.Targets.Count} 耗时={prepared.WindowsMs}ms");
+                foreach (var shot in prepared.Shots)
+                    DiagnosticsLog.Write(log, $"抓屏 {shot.Display.Width}×{shot.Display.Height}@{shot.Display.X},{shot.Display.Y} 抓取={shot.GrabMs}ms 压暗={shot.DimMs}ms");
+                var displays = prepared.Shots.Select(shot => shot.Display).ToArray();
+                var reused = EnsurePool(displays, log);
+                var bindWatch = Stopwatch.StartNew();
+                for (var i = 0; i < prepared.Shots.Count; i++)
                 {
-                    var window = new SelectionWindow(display, Native.Capture(display), targets, mode);
-                    window.Selected += value => selectionTask?.TrySetResult(value); overlays.Add(window);
+                    var shot = prepared.Shots[i];
+                    pool[i].Bind(shot.Display, shot.Frame, prepared.Targets, mode, shot.Dimmed, log);
+                    overlays.Add(pool[i]);
                 }
-                foreach (var window in overlays) window.Show();
+                var bindMs = bindWatch.ElapsedMilliseconds;
+                var showWatch = Stopwatch.StartNew();
+                foreach (var window in overlays) window.ShowPrepared();
+                var showMs = showWatch.ElapsedMilliseconds;
+                Native.GetCursorPos(out var cursor);
+                var focus = overlays.FirstOrDefault(window => window.ContainsScreenPoint(cursor.X, cursor.Y)) ?? (overlays.Count > 0 ? overlays[0] : null);
+                focus?.FocusForInput();
+                DiagnosticsLog.Write(log, $"叠加层显示 数量={overlays.Count} 复用={(reused ? "是" : "否")} 绑定={bindMs}ms 显示={showMs}ms");
                 var selected = await selectionTask.Task; selectionTask = null;
-                CloseOverlays(); token.ThrowIfCancellationRequested();
-                if (selected is null) { Notify("已取消截图"); return; }
-                if (selected.TargetWindow != 0) Native.SetForegroundWindow(selected.TargetWindow);
-                await Task.Delay(150, token); result = Native.Capture(selected.Bounds);
+                var afterUp = Stopwatch.StartNew();
+                ReleaseOverlays(); token.ThrowIfCancellationRequested();
+                if (selected is null) { DiagnosticsLog.Write(log, $"选区返回 取消 {afterUp.ElapsedMilliseconds}ms"); Notify("已取消截图"); return; }
+                var cropWatch = Stopwatch.StartNew();
+                var monitors = prepared.Shots.Select(shot => new MonitorBitmap(shot.Display.X, shot.Display.Y, shot.Display.Width, shot.Display.Height, shot.Frame)).ToArray();
+                result = ScreenCrop.FromMonitors(monitors, selected.Bounds.X, selected.Bounds.Y, selected.Bounds.Width, selected.Bounds.Height);
+                DiagnosticsLog.Write(log, $"选区返回 裁剪={result.Width}×{result.Height} 来源=已抓屏 无二次BitBlt 裁剪={cropWatch.ElapsedMilliseconds}ms 抬起至结果={afterUp.ElapsedMilliseconds}ms");
                 if (mode == 4)
                 {
                     var completion = new TaskCompletionSource<PixelFrame?>(TaskCreationOptions.RunContinuationsAsynchronously);
-                    scrolling = new(selected, result); scrolling.Finished += frame => completion.TrySetResult(frame);
+                    scrolling = new(selected, result, log); scrolling.Finished += frame => completion.TrySetResult(frame);
                     scrolling.StartAutomatic(); result = await completion.Task;
                     scrolling.Dispose(); scrolling = null; token.ThrowIfCancellationRequested();
                 }
@@ -87,11 +122,60 @@ internal sealed class AppController
         catch (Exception ex) { ShowMain(); Notify($"截图未完成：{ex.Message}"); if (InteractiveErrors) MessageBox.Show(Main, ex.Message, "截图未完成", MessageBoxButton.OK, MessageBoxImage.Information); }
         finally
         {
-            CloseOverlays(); scrolling?.Dispose(); scrolling = null; Restore();
+            ReleaseOverlays(); scrolling?.Dispose(); scrolling = null; Restore();
             Desktop?.EnableEscape(false); operation?.Dispose(); operation = null; Busy = false; Changed?.Invoke();
         }
     }
-    private void CloseOverlays() { foreach (var window in overlays) window.Close(); overlays.Clear(); }
+    internal void WarmOverlays()
+    {
+        var log = DiagnosticsLog.DailyPath(Root);
+        var watch = Stopwatch.StartNew();
+        var displays = Native.Displays();
+        var reused = EnsurePool(displays, log);
+        DiagnosticsLog.Write(log, $"叠加层预热 数量={pool.Count} 耗时={watch.ElapsedMilliseconds}ms 新建={(reused ? "否" : "是")}");
+    }
+    private bool EnsurePool(IReadOnlyList<PixelRect> displays, string log)
+    {
+        var matched = pool.Count == displays.Count;
+        for (var i = 0; matched && i < displays.Count; i++)
+            matched = pool[i].IsUsable && pool[i].BoundDisplay == displays[i];
+        if (matched) return true;
+        foreach (var window in pool) if (window.IsUsable) window.Close();
+        pool.Clear();
+        foreach (var display in displays)
+        {
+            var window = SelectionWindow.CreateShell(display, log);
+            window.Selected += value => selectionTask?.TrySetResult(value);
+            pool.Add(window);
+        }
+        return false;
+    }
+    private (List<DesktopWindow> Targets, List<(PixelRect Display, PixelFrame Frame, PixelFrame Dimmed, long GrabMs, long DimMs)> Shots, long WindowsMs) PrepareShots(CancellationToken token)
+    {
+        var windowWatch = Stopwatch.StartNew();
+        var found = Native.Windows();
+        var windowsMs = windowWatch.ElapsedMilliseconds;
+        var shots = new List<(PixelRect Display, PixelFrame Frame, PixelFrame Dimmed, long GrabMs, long DimMs)>();
+        foreach (var screen in Native.Displays())
+        {
+            token.ThrowIfCancellationRequested();
+            var grabWatch = Stopwatch.StartNew();
+            var frame = Native.Capture(screen);
+            var grabMs = grabWatch.ElapsedMilliseconds;
+            var dimWatch = Stopwatch.StartNew();
+            shots.Add((screen, frame, frame.Dimmed(SelectionGeometry.OverlayAlpha), grabMs, dimWatch.ElapsedMilliseconds));
+        }
+        return (found, shots, windowsMs);
+    }
+    private void ReleaseOverlays()
+    {
+        foreach (var window in overlays)
+        {
+            if (pool.Contains(window) && window.IsUsable) window.Park();
+            else if (window.IsUsable) window.Close();
+        }
+        overlays.Clear();
+    }
     private void Restore() { foreach (var window in hidden) if (Application.Current.Windows.Cast<Window>().Contains(window)) window.Show(); hidden.Clear(); }
     public void Cancel() { operation?.Cancel(); selectionTask?.TrySetResult(null); scrolling?.Cancel(); }
     public void OpenEditor(PixelFrame image)
@@ -109,6 +193,6 @@ internal sealed class AppController
     public void Quit()
     {
         foreach (var editor in editors.ToList()) { editor.Close(); if (editors.Contains(editor)) return; }
-        Quitting = true; Cancel(); Desktop?.Dispose(); Main.Close(); Application.Current.Shutdown();
+        Quitting = true; Cancel(); foreach (var window in pool.ToList()) if (window.IsUsable) window.Close(); pool.Clear(); Desktop?.Dispose(); Main.Close(); Application.Current.Shutdown();
     }
 }
