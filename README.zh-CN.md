@@ -59,7 +59,7 @@
 - Command + S：保存 PNG 或 JPEG；默认建议下载文件夹，可自由更改。
 - Command + Z / Command + Shift + Z：撤销 / 重做。
 - Command + 0 / Command + 1：适应窗口 / 100%。
-- V / A / R / O / P / T / N / M / H：快速切换工具。
+- V / A / R / O / P / T / N / M / H：快速切换工具。T 是文字工具；Command + T 是翻译识别结果。
 - 按住 Shift 绘制正方形、正圆或锁定箭头角度；Option + 拖动可平移。
 - 选中标注后 Delete 删除。
 
@@ -67,11 +67,20 @@
 
 「体验标注」提供本地生成的练习图，不需要屏幕权限。「打开图片」可编辑现有 PNG、JPEG、HEIC、TIFF、WebP，也可以将图片文件通过 Finder 的「打开方式」交给本应用。
 
+## 翻译
+
+识别出文字后，可以在结果里一键翻译。语言为中文、English 和 Filipino。原文可以自动检测，也可以手动指定；目标语言从这三种里选择。快捷键是 Command + T。可以分别复制原文、译文，或两者一起复制。
+
+- **DeepSeek 在线**（默认）：调用官方 Chat Completions 接口 `https://api.deepseek.com`，模型为 `deepseek-flash`。API Key 由你自己填写，只保存在 macOS 钥匙串，不会写入源码、文档或日志。第一次在线翻译前会询问是否允许发送文字。
+- **Apple 离线**（可选，macOS 15 及以上）：使用系统 Translation 框架，在本机翻译，不需要联网同意。如果系统没有对应语言（部分系统暂不支持 Filipino），可以改用 DeepSeek，或在「系统设置 → 通用 → 语言与地区 → 翻译语言」中下载语言。
+
+默认不联网；仅在用户点击翻译且选择在线引擎时发送识别出的文字（不含图片）。不会缓存译文。Windows 版这次不包含翻译。
+
 ## 本地数据
 
-原始截图保存在 `~/Library/Application Support/LumaShot/Captures/`，自动保留最近 100 张。历史记录可按类型筛选、搜索文件名、重新编辑、复制、另存或删除。标注结果需要复制或另存；历史保存的是原始截图，不保存标注会话。应用不联网、不上传图片、不需要账号。
+原始截图保存在 `~/Library/Application Support/LumaShot/Captures/`，自动保留最近 100 张。历史记录可按类型筛选、搜索文件名、重新编辑、复制、另存或删除。标注结果需要复制或另存；历史保存的是原始截图，不保存标注会话。不需要账号。默认不联网；仅在用户点击翻译且选择在线引擎时发送识别出的文字（不含图片）。不会缓存译文。
 
-偏好设置可开启自动复制、提示音、截图延时和登录启动，查看权限与快捷键注册冲突。登录启动需从完整 `.app` 运行。
+偏好设置可开启自动复制、提示音、截图延时和登录启动，设置翻译引擎、语言和 DeepSeek API Key，并查看权限与快捷键注册冲突。登录启动需从完整 `.app` 运行。
 
 ## 开发
 
@@ -112,7 +121,7 @@ build/CaptureSmoke
 
 - `Sources/LumaShot/Capture/`：ScreenCaptureKit 捕捉、选择遮罩、滚动控制和图像拼接。
 - `Sources/LumaShot/Editor/`：标注模型、原始像素渲染器、画布及编辑窗口。
-- `Sources/LumaShot/Services/`：Carbon 全局快捷键、本地历史、图像导出。
+- `Sources/LumaShot/Services/`：Carbon 全局快捷键、本地历史、图像导出、文字识别，以及 Mac 翻译（钥匙串、DeepSeek、Apple 翻译）。
 - `Sources/LumaShot/`：应用入口、主界面、历史与偏好设置。
 - `Resources/Info.plist`：应用包配置与权限说明。
 - `scripts/build.sh`：生成图标、构建应用，默认临时签名，可选 Developer ID 签名。
@@ -122,7 +131,7 @@ build/CaptureSmoke
 
 ## 参与贡献
 
-欢迎提交问题、滚动兼容性反馈、无障碍改进和 Pull Request。请阅读 [贡献指南](CONTRIBUTING.md) 和 [更新记录](CHANGELOG.md)。应用不发起网络请求、无遥测、不上传图片。
+欢迎提交问题、滚动兼容性反馈、无障碍改进和 Pull Request。请阅读 [贡献指南](CONTRIBUTING.md) 和 [更新记录](CHANGELOG.md)。默认不联网；仅在用户点击翻译且选择在线引擎时发送识别出的文字（不含图片）。无遥测。
 
 ## 许可证
 

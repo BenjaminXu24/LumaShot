@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Mac OCR results can be translated in place. DeepSeek (`deepseek-flash`, online) is the default engine; Apple Translation on macOS 15 and later is an optional on-device engine. Languages are Chinese, English, and Filipino. The DeepSeek API key is stored in the macOS Keychain. The first online translation asks for consent. Images are not uploaded and translations are not cached. Windows translation is not included.
+
 ## Windows [0.1.0](https://github.com/BenjaminXu24/LumaShot/releases/tag/windows-v0.1.0) - 2026-10-17
 
 - Added a native Windows WPF edition with region, visible-window, display, and scrolling capture; global Ctrl+Shift+1–4 shortcuts; and a system tray entry.
