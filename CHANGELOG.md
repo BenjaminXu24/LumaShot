@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Mac OCR results can be translated in place. DeepSeek (`deepseek-flash`, online) is the default engine; Apple Translation on macOS 15 and later is an optional on-device engine. Languages are Chinese, English, and Filipino. The DeepSeek API key is stored in the macOS Keychain. The first online translation asks for consent. Images are not uploaded and translations are not cached. Windows translation is not included.
+
+### Changed
+
+- Mac marketing version is 0.2.0 (`CFBundleShortVersionString`); the build number (`CFBundleVersion`) is 2. Release scripts read the marketing version from the built app's Info.plist, so the notarized archive name is `LumaShot-v0.2.0-macOS-universal-notarized.zip`.
+
 ## Windows [0.1.0](https://github.com/BenjaminXu24/LumaShot/releases/tag/windows-v0.1.0) - 2026-10-17
 
 - Added a native Windows WPF edition with region, visible-window, display, and scrolling capture; global Ctrl+Shift+1–4 shortcuts; and a system tray entry.

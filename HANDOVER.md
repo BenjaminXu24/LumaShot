@@ -7,7 +7,7 @@
 
 LumaShot · 拾光截图是一个桌面截图工具，MIT 协议，仓库：<https://github.com/BenjaminXu24/LumaShot>。
 
-- **macOS 版（主线）**：原生 Swift / SwiftUI + AppKit，使用 ScreenCaptureKit 和 Carbon（全局快捷键）。用 Swift Package Manager 构建（`Package.swift`，没有 xcodeproj），要求 macOS 14+。功能包括区域、窗口、显示器和滚动长截图，标注（箭头、矩形、椭圆、画笔、文字、序号、马赛克），复制和保存，以及本地历史（最近 100 张）。没有第三方运行时依赖，也不联网。
+- **macOS 版（主线）**：原生 Swift / SwiftUI + AppKit，使用 ScreenCaptureKit 和 Carbon（全局快捷键）。用 Swift Package Manager 构建（`Package.swift`，没有 xcodeproj），要求 macOS 14+。功能包括区域、窗口、显示器和滚动长截图，标注（箭头、矩形、椭圆、画笔、文字、序号、马赛克），复制和保存，以及本地历史（最近 100 张）。没有第三方运行时依赖。默认不联网；仅在用户点击翻译且选择在线引擎时发送识别出的文字（不含图片）。本次不包含 Windows 翻译。
   - 代码：`Sources/LumaShot/`，测试：`Tests/LumaShotTests/`，脚本：`scripts/`。
 - **Windows 版（移植）**：C# / .NET 10 WPF，位于 `Windows/`。
   - `Windows/LumaShot.Core`：与平台无关的像素、拼接、裁剪、选区几何、标注模型和诊断辅助代码。

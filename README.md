@@ -31,8 +31,9 @@ To build on another Windows PC, follow the [Windows source build instructions](W
 - **Copy or save:** clipboard export and native PNG/JPEG save dialogs, preserving original Retina pixels.
 - **Local history:** the latest 100 original screenshots, searchable by capture type or filename, with lightweight thumbnails.
 - **Preferences:** capture delay, sound, automatic clipboard copy, login launch, and permission guidance.
+- **Translate OCR text on Mac:** DeepSeek online by default, or Apple Translation on macOS 15 and later. Chinese, English, and Filipino. The API key stays in the Keychain. Command-T translates the recognized text. Images are not uploaded.
 
-Built with SwiftUI, AppKit, ScreenCaptureKit, and Carbon. No third-party runtime dependencies, account, telemetry, or image uploads. The interface is currently in **Simplified Chinese**.
+Built with SwiftUI, AppKit, ScreenCaptureKit, and Carbon. No third-party runtime dependencies and no LumaShot account. Images are not uploaded. Online translation is opt-in: it runs only after you tap Translate and choose DeepSeek, and it sends the recognized text only. The interface is currently in **Simplified Chinese**.
 
 ![Annotation editor with a generated practice image](docs/images/editor.png)
 
@@ -80,6 +81,7 @@ For scrolling captures, select the scrolling content and avoid stationary sideba
 | Fit / 100% | Command + 0 / Command + 1 |
 | Select, arrow, rectangle, ellipse | V / A / R / O |
 | Pen, text, number, mosaic, hand | P / T / N / M / H |
+| Translate recognized text | Command + T |
 | Delete selected annotation | Delete |
 
 Hold **Shift** for constrained arrows, squares, or circles. **Option + drag** pans the canvas. Mosaic changes the exported bitmap pixels. Save defaults to Downloads and lets you choose another location.
@@ -90,7 +92,7 @@ Use **体验标注 / Try annotations** to open a generated practice image withou
 
 Original captures are stored in `~/Library/Application Support/LumaShot/Captures/`. The oldest are removed when more than 100 captures are retained. History deletion removes the app's copy; separately exported images stay in their chosen locations.
 
-**History stores original screenshots, not annotation sessions.** Copy or save the annotated result before closing the editor. The app does not make network requests or upload images.
+**History stores original screenshots, not annotation sessions.** Copy or save the annotated result before closing the editor. Images stay on this Mac and are not uploaded. By default the app stays offline; only after you tap Translate and choose the online engine does it send the recognized text (not the image). Translations are not cached.
 
 ## Build
 
@@ -126,6 +128,7 @@ This is an **early-stage release**:
 - Annotation sessions are not persisted; the history contains originals.
 - The UI is Simplified Chinese; localization contributions are welcome.
 - Local and CI builds use ad-hoc signing by default; the recommended release archive is separately Developer ID signed and notarized.
+- OCR translation is Mac-only. Unit tests cover the DeepSeek request body, the consent gate, and Keychain item shaping. They do not call the network or Apple's Translation framework.
 
 Tests run without screen permissions. See [CONTRIBUTING.md](CONTRIBUTING.md) for an optional local capture smoke check. UI previews can be generated with:
 
