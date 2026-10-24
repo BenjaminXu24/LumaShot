@@ -39,6 +39,12 @@ final class TranslationTests: XCTestCase {
         defaults.set("nope", forKey: TranslationPreferences.engineKey)
         defaults.set("nope", forKey: TranslationPreferences.sourceKey)
         defaults.set("nope", forKey: TranslationPreferences.targetKey)
+        let invalidChoices = TranslationPreferences.load(from: defaults)
+        XCTAssertEqual(invalidChoices.engine, TranslationPreferences.standard.engine)
+        XCTAssertEqual(invalidChoices.source, TranslationPreferences.standard.source)
+        XCTAssertEqual(invalidChoices.target, TranslationPreferences.standard.target)
+        XCTAssertTrue(invalidChoices.onlineConsent)
+        defaults.set("nope", forKey: TranslationPreferences.consentKey)
         XCTAssertEqual(TranslationPreferences.load(from: defaults), .standard)
 
         let unrelated = "lumashot-ocr-source-7f3c9a"
