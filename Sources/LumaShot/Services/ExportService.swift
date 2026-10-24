@@ -17,6 +17,15 @@ enum ExportService {
         return pasteboard.writeObjects([item])
     }
 
+    /// Copies recognized text only. Whitespace-only strings are left off the pasteboard.
+    @MainActor
+    @discardableResult
+    static func copyText(_ text: String, pasteboard: NSPasteboard = .general) -> Bool {
+        guard text.rangeOfCharacter(from: CharacterSet.whitespacesAndNewlines.inverted) != nil else { return false }
+        pasteboard.clearContents()
+        return pasteboard.setString(text, forType: .string)
+    }
+
     @MainActor
     @discardableResult
     static func save(_ image: NSImage, suggestedName: String? = nil) -> URL? {

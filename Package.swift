@@ -8,7 +8,8 @@ let package = Package(
     targets: [
         .executableTarget(name: "LumaShot", path: "Sources/LumaShot", linkerSettings: [
             .linkedFramework("AppKit"), .linkedFramework("SwiftUI"),
-            .linkedFramework("ScreenCaptureKit"), .linkedFramework("Carbon")
+            .linkedFramework("ScreenCaptureKit"), .linkedFramework("Carbon"),
+            .linkedFramework("Vision")
         ]),
         .testTarget(name: "LumaShotTests", dependencies: ["LumaShot"], path: "Tests/LumaShotTests")
     ],

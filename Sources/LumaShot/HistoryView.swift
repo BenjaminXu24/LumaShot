@@ -5,6 +5,7 @@ struct CaptureThumbnail: View {
     let item: CaptureItem
     @ObservedObject var model: AppModel
     @ObservedObject var store: CaptureStore
+    var onRecognize: () -> Void
     @State private var hovered = false
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -25,8 +26,19 @@ struct CaptureThumbnail: View {
                 HStack {
                     Text(item.mode.title).font(.system(size: 11, weight: .semibold))
                     Spacer()
+                    Button(action: onRecognize) {
+                        Image(systemName: "text.viewfinder")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Palette.accent)
+                            .frame(width: 22, height: 16)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("识别文字")
+                    .accessibilityLabel("识别文字")
                     Menu {
                         Button("打开标注") { if let image = store.image(for: item) { model.openEditor(image) } }
+                        Button("识别文字") { onRecognize() }
                         Button("复制到剪贴板") {
                             if let image = store.image(for: item), ExportService.copy(image) { model.showToast("已复制到剪贴板") }
                         }
@@ -51,6 +63,7 @@ struct CaptureThumbnail: View {
 struct HistoryView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var store: CaptureStore
+    @StateObject private var ocrSession = OCRSession()
     @State private var filter: CaptureMode?
     @State private var clearConfirmation = false
     private var filtered: [CaptureItem] {
@@ -87,15 +100,27 @@ struct HistoryView: View {
                     .background(.white, in: RoundedRectangle(cornerRadius: 16))
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 15)], spacing: 16) {
-                    ForEach(filtered) { item in CaptureThumbnail(item: item, model: model, store: store) }
+                    ForEach(filtered) { item in
+                        CaptureThumbnail(item: item, model: model, store: store, onRecognize: { recognize(item) })
+                    }
                 }
             }
             Text("仅保存在这台 Mac · 最多保留最近 100 张原始截图 · 标注结果请复制或另存为")
                 .font(.system(size: 10)).foregroundStyle(Palette.muted)
-        }.confirmationDialog("清空全部截图历史？", isPresented: $clearConfirmation) {
+        }
+        .background(OCRSheetPresenter(session: ocrSession) { model.showToast($0) })
+        .confirmationDialog("清空全部截图历史？", isPresented: $clearConfirmation) {
             Button("清空历史", role: .destructive) { store.clear() }
             Button("取消", role: .cancel) {}
         } message: { Text("这会删除应用内保留的原始截图；已另存到其他位置的图片不会被删除。") }
+    }
+
+    private func recognize(_ item: CaptureItem) {
+        guard let image = store.image(for: item), let cgImage = ImageEncoding.cgImage(from: image) else {
+            model.showToast("无法读取这张截图")
+            return
+        }
+        ocrSession.recognize(image: cgImage, region: nil, kind: "历史原图")
     }
 
     private func filterButton(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {

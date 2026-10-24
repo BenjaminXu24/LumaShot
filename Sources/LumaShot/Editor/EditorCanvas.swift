@@ -151,14 +151,31 @@ final class AnnotationCanvasView: NSView, NSUserInterfaceValidations {
                 context.strokeEllipse(in: CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6))
             }
         }
+        drawOCRSelection(in: context)
+    }
+    private func drawOCRSelection(in context: CGContext) {
+        guard let selection = model.ocrSelection, selection.width > 0.5, selection.height > 0.5 else { return }
+        let rect = displayRect(selection)
+        context.saveGState()
+        context.setFillColor(NSColor(srgbRed: 0.49, green: 0.35, blue: 0.94, alpha: 0.14).cgColor)
+        context.fill(rect)
+        context.setStrokeColor(NSColor(srgbRed: 0.49, green: 0.35, blue: 0.94, alpha: 1).cgColor)
+        context.setLineWidth(1.5)
+        context.setLineDash(phase: 0, lengths: [5, 4])
+        context.stroke(rect)
+        context.restoreGState()
     }
     override func resetCursorRects() {
         let cursor: NSCursor
-        switch model.tool {
-        case .select: cursor = .arrow
-        case .hand: cursor = .openHand
-        case .text: cursor = .iBeam
-        default: cursor = .crosshair
+        if model.regionRecognitionArmed {
+            cursor = .crosshair
+        } else {
+            switch model.tool {
+            case .select: cursor = .arrow
+            case .hand: cursor = .openHand
+            case .text: cursor = .iBeam
+            default: cursor = .crosshair
+            }
         }
         addCursorRect(visibleRect, cursor: cursor)
     }
@@ -182,6 +199,14 @@ final class AnnotationCanvasView: NSView, NSUserInterfaceValidations {
             isPanning = true
             previousPoint = event.locationInWindow
             NSCursor.closedHand.set()
+            return
+        }
+        if model.regionRecognitionArmed {
+            guard imageRect.contains(local) else { model.ocrSelection = nil; return }
+            let point = imagePoint(event)
+            drawingOrigin = point
+            model.selectedID = nil
+            model.ocrSelection = CGRect(origin: point, size: .zero)
             return
         }
         guard imageRect.contains(local) else { model.selectedID = nil; return }
@@ -222,6 +247,12 @@ final class AnnotationCanvasView: NSView, NSUserInterfaceValidations {
             previousPoint = now
             return
         }
+        if model.regionRecognitionArmed {
+            guard let origin = drawingOrigin else { return }
+            model.ocrSelection = Self.spanning(origin, imagePoint(event))
+            needsDisplay = true
+            return
+        }
         guard let origin = drawingOrigin else { return }
         var point = imagePoint(event)
         if isMovingSelection, let id = model.selectedID, let previous = previousPoint,
@@ -248,12 +279,23 @@ final class AnnotationCanvasView: NSView, NSUserInterfaceValidations {
         model.draft = draft
     }
     override func mouseUp(with event: NSEvent) {
+        let recognizeDrag = model.regionRecognitionArmed && !isPanning
+        let selection = model.ocrSelection
         defer {
             drawingOrigin = nil
             previousPoint = nil
             isMovingSelection = false
             isPanning = false
             window?.invalidateCursorRects(for: self)
+        }
+        if recognizeDrag {
+            if let selection, selection.width >= 4, selection.height >= 4 {
+                model.recognizeSelection(selection)
+            } else if selection != nil {
+                model.ocrSelection = nil
+                model.showToast("拖动框选需要识别的区域")
+            }
+            return
         }
         guard let draft = model.draft else { return }
         if draft.tool == .pen || max(draft.rect.width, draft.rect.height) >= 3 / scale {
@@ -278,7 +320,13 @@ final class AnnotationCanvasView: NSView, NSUserInterfaceValidations {
     }
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 51 || event.keyCode == 117 { model.deleteSelection(); return }
-        if event.keyCode == 53 { model.draft = nil; model.selectedID = nil; drawingOrigin = nil; return }
+        if event.keyCode == 53 {
+            model.draft = nil
+            model.selectedID = nil
+            model.ocrSelection = nil
+            drawingOrigin = nil
+            return
+        }
         let command = event.modifierFlags.contains(.command)
         if command {
             switch event.charactersIgnoringModifiers?.lowercased() {
@@ -291,6 +339,9 @@ final class AnnotationCanvasView: NSView, NSUserInterfaceValidations {
             }
         }
         super.keyDown(with: event)
+    }
+    private static func spanning(_ a: CGPoint, _ b: CGPoint) -> CGRect {
+        CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
     }
     private func addText(at point: CGPoint) {
         let alert = NSAlert()
