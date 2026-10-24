@@ -4,6 +4,12 @@ import PackageDescription
 // Translation.framework ships with macOS 15+. Weak-link it so a Mac on the
 // macOS 14 deployment target can still launch. A normal import would autolink
 // a hard dependency and fail dyld on macOS 14.
+//
+// `-disable-autolink-framework` is a frontend option. Passing it as a driver
+// flag makes swiftc treat the following `Translation` token as an input file
+// (`error: unexpected input file: Translation`). Each frontend argument needs
+// its own `-Xfrontend`. Linker flags are forwarded to swiftc as written;
+// `-Xlinker` is required so `-weak_framework` is not parsed as a source file.
 let weakTranslationLink: [LinkerSetting] = [
     .unsafeFlags(
         ["-Xlinker", "-weak_framework", "-Xlinker", "Translation"],
@@ -12,7 +18,10 @@ let weakTranslationLink: [LinkerSetting] = [
 ]
 let disableTranslationAutolink: [SwiftSetting] = [
     .unsafeFlags(
-        ["-disable-autolink-framework", "Translation"],
+        [
+            "-Xfrontend", "-disable-autolink-framework",
+            "-Xfrontend", "Translation"
+        ],
         .when(platforms: [.macOS])
     )
 ]
