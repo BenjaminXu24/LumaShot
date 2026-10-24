@@ -4,6 +4,7 @@ import SwiftUI
 struct DashboardView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var store: CaptureStore
+    @StateObject private var ocrSession = OCRSession()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -44,6 +45,7 @@ struct DashboardView: View {
             Button("知道了", role: .cancel) { model.error = nil }
             Button("权限设置") { model.section = .settings; model.error = nil }
         } message: { Text(model.error ?? "") }
+        .background(OCRSheetPresenter(session: ocrSession) { model.showToast($0) })
     }
 
     private var sidebar: some View {
@@ -172,7 +174,7 @@ struct DashboardView: View {
                 } else {
                     HStack(alignment: .top, spacing: 13) {
                         ForEach(Array(store.items.prefix(3))) { item in
-                            CaptureThumbnail(item: item, model: model, store: store)
+                            CaptureThumbnail(item: item, model: model, store: store, onRecognize: { recognize(item) })
                         }
                         if store.items.count < 3 { Spacer(minLength: 0) }
                     }
@@ -185,6 +187,14 @@ struct DashboardView: View {
                 Text("为 macOS 用心设计").foregroundStyle(Palette.muted.opacity(0.65))
             }.font(.system(size: 10))
         }
+    }
+
+    private func recognize(_ item: CaptureItem) {
+        guard let image = store.image(for: item), let cgImage = ImageEncoding.cgImage(from: image) else {
+            model.showToast("无法读取这张截图")
+            return
+        }
+        ocrSession.recognize(image: cgImage, region: nil, kind: "历史原图")
     }
 
     private var hero: some View {

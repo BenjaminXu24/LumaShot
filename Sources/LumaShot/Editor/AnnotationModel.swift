@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import CoreText
 import UniformTypeIdentifiers
@@ -100,9 +101,13 @@ final class AnnotationEditorModel: ObservableObject {
     @Published var zoom: CGFloat? = nil
     @Published var effectiveScale: CGFloat = 1
     @Published var toast: String?
+    @Published var regionRecognitionArmed = false
+    @Published var ocrSelection: CGRect?
     @Published private(set) var undoStack: [[EditorAnnotation]] = []
     @Published private(set) var redoStack: [[EditorAnnotation]] = []
+    let ocrSession = OCRSession()
     private var toastTask: Task<Void, Never>?
+    private var ocrForwarding: AnyCancellable?
     let onCopy: (NSImage) -> Void
     let onSave: (NSImage) -> Void
 
@@ -111,6 +116,11 @@ final class AnnotationEditorModel: ObservableObject {
         self.onCopy = onCopy
         self.onSave = onSave
         lineWidth = max(4, min(14, CGFloat(pixelImage?.width ?? 1600) / 200))
+        // The editor view observes this model. Forward session updates on the next turn so
+        // SwiftUI reads isPresented after it has changed.
+        ocrForwarding = ocrSession.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.objectWillChange.send() }
+        }
     }
     var pixelImage: CGImage? { image.cgImage(forProposedRect: nil, context: nil, hints: nil) }
     var pixelSize: CGSize {
@@ -169,6 +179,25 @@ final class AnnotationEditorModel: ObservableObject {
         guard let rendered = renderedImage() else { showToast("图片暂时无法导出"); return }
         onSave(rendered)
     }
+    /// Recognizes the whole current image. Rendered pixels are used when annotations exist,
+    /// so mosaic redaction is honored. Coordinates stay in source pixels.
+    func recognizeCurrentImage() {
+        guard let cgImage = imageForRecognition() else { showToast("图片暂时无法识别"); return }
+        ocrSelection = nil
+        ocrSession.recognize(image: cgImage, region: nil, kind: "整张图片")
+    }
+    /// `rect` is top-left image pixels, the same space as annotations (Retina-aware).
+    func recognizeSelection(_ rect: CGRect) {
+        guard let cgImage = imageForRecognition() else { showToast("图片暂时无法识别"); return }
+        ocrSession.recognize(image: cgImage, region: rect, kind: "选区")
+    }
+    private func imageForRecognition() -> CGImage? {
+        if annotations.isEmpty { return pixelImage }
+        if let rendered = AnnotationRenderer.renderedCGImage(image: image, annotations: annotations) {
+            return rendered
+        }
+        return pixelImage
+    }
     func changeZoom(by factor: CGFloat) {
         zoom = min(8, max(0.05, (zoom ?? effectiveScale) * factor))
     }
@@ -195,6 +224,9 @@ final class AnnotationEditorModel: ObservableObject {
         redoStack = []
         zoom = nil
         lineWidth = max(4, min(14, pixelSize.width / 200))
+        regionRecognitionArmed = false
+        ocrSelection = nil
+        ocrSession.dismiss()
     }
 }
 
@@ -202,6 +234,10 @@ final class AnnotationEditorModel: ObservableObject {
 /// The bitmap export uses the source CGImage dimensions, independent of display scale.
 enum AnnotationRenderer {
     static func render(image: NSImage, annotations: [EditorAnnotation]) -> NSImage? {
+        guard let cgImage = renderedCGImage(image: image, annotations: annotations) else { return nil }
+        return NSImage(cgImage: cgImage, size: image.size)
+    }
+    static func renderedCGImage(image: NSImage, annotations: [EditorAnnotation]) -> CGImage? {
         guard let source = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
               let context = CGContext(data: nil, width: source.width, height: source.height,
                                       bitsPerComponent: 8, bytesPerRow: 0,
@@ -211,8 +247,7 @@ enum AnnotationRenderer {
         context.translateBy(x: 0, y: CGFloat(source.height))
         context.scaleBy(x: 1, y: -1)
         draw(annotations, in: context, source: source)
-        guard let result = context.makeImage() else { return nil }
-        return NSImage(cgImage: result, size: image.size)
+        return context.makeImage()
     }
     static func draw(_ annotations: [EditorAnnotation], in context: CGContext, source: CGImage) {
         for annotation in annotations { draw(annotation, in: context, source: source) }

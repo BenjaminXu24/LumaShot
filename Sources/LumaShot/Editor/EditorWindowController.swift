@@ -66,6 +66,7 @@ private struct AnnotationEditorView: View {
         .tint(accent)
         .preferredColorScheme(.light)
         .animation(.easeOut(duration: 0.2), value: model.toast)
+        .background(OCRSheetPresenter(session: model.ocrSession) { model.showToast($0) })
     }
     private var header: some View {
         HStack(spacing: 12) {
@@ -93,6 +94,16 @@ private struct AnnotationEditorView: View {
             iconButton("arrow.uturn.forward", help: "重做 · ⇧⌘Z", action: model.redo)
                 .disabled(!model.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
             divider
+            Button(action: model.recognizeCurrentImage) {
+                Label("识别文字", systemImage: "text.viewfinder")
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 12).frame(height: 34)
+                    .background(Color.black.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("r", modifiers: [.command, .shift])
+            .help("识别整张图片中的文字，仅在本机完成 · ⇧⌘R")
+            .accessibilityLabel("识别文字")
             Button(action: model.copyImage) {
                 Label("复制", systemImage: "square.on.square")
                     .font(.system(size: 12, weight: .semibold))
@@ -118,12 +129,20 @@ private struct AnnotationEditorView: View {
     private var toolPalette: some View {
         HStack(spacing: 4) {
             ForEach(AnnotationTool.allCases) { tool in
-                ToolButton(tool: tool, isSelected: model.tool == tool, accent: accent) {
+                ToolButton(tool: tool, isSelected: model.tool == tool && !model.regionRecognitionArmed, accent: accent) {
                     model.tool = tool
                     model.selectedID = nil
+                    model.regionRecognitionArmed = false
+                    model.ocrSelection = nil
                 }
                 .keyboardShortcut(shortcut(for: tool), modifiers: [])
             }
+            OCRRegionButton(isSelected: model.regionRecognitionArmed, accent: accent) {
+                model.regionRecognitionArmed.toggle()
+                model.selectedID = nil
+                if !model.regionRecognitionArmed { model.ocrSelection = nil }
+            }
+            .keyboardShortcut("i", modifiers: [])
             divider.padding(.horizontal, 7)
             HStack(spacing: 7) {
                 ForEach(Array(colors.enumerated()), id: \.offset) { _, color in
@@ -169,7 +188,8 @@ private struct AnnotationEditorView: View {
     private var footer: some View {
         HStack(spacing: 8) {
             Circle().fill(accent.opacity(0.8)).frame(width: 5, height: 5)
-            Text(model.tool.hint).font(.system(size: 11)).foregroundStyle(muted)
+            Text(model.regionRecognitionArmed ? "拖动框选区域，松开后识别其中的文字" : model.tool.hint)
+                .font(.system(size: 11)).foregroundStyle(muted)
             Spacer()
             if !model.annotations.isEmpty {
                 Text("\(model.annotations.count) 处标注").font(.system(size: 11)).foregroundStyle(muted)
@@ -217,6 +237,32 @@ private struct AnnotationEditorView: View {
         case .mosaic: return "m"
         case .hand: return "h"
         }
+    }
+}
+
+private struct OCRRegionButton: View {
+    let isSelected: Bool
+    let accent: Color
+    let action: () -> Void
+    @State private var hovered = false
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 5) {
+                Image(systemName: "crop").font(.system(size: 16, weight: .medium)).frame(height: 18)
+                Text("框选").font(.system(size: 9, weight: isSelected ? .semibold : .medium))
+            }
+            .foregroundStyle(isSelected ? accent : Color(red: 0.42, green: 0.41, blue: 0.48))
+            .frame(width: 43, height: 44)
+            .background(isSelected ? accent.opacity(0.1) : hovered ? Color.black.opacity(0.035) : .clear,
+                        in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovered)
+        .animation(.easeOut(duration: 0.15), value: isSelected)
+        .help("拖动框选区域，松开后识别其中的文字 · I")
+        .accessibilityLabel("框选识别")
     }
 }
 

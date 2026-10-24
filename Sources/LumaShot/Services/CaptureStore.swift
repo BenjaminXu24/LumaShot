@@ -170,4 +170,9 @@ enum ImageEncoding {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         return NSBitmapImageRep(cgImage: cgImage)
     }
+
+    /// Native pixel buffer, including Retina captures whose point size is smaller than the bitmap.
+    static func cgImage(from image: NSImage) -> CGImage? {
+        bitmap(from: image)?.cgImage
+    }
 }
