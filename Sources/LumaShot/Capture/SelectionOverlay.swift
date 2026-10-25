@@ -84,6 +84,7 @@ private final class SelectionView: NSView {
     private var tracking: NSTrackingArea?
 
     override var acceptsFirstResponder: Bool { true }
+    override var isOpaque: Bool { false }
 
     init(frame: CGRect, screen: NSScreen, mode: CaptureMode, windows: [SCWindow]) {
         self.screen = screen
@@ -157,11 +158,12 @@ private final class SelectionView: NSView {
     override func rightMouseDown(with event: NSEvent) { onCancel?() }
 
     override func draw(_ dirtyRect: NSRect) {
+        let shade = NSBezierPath(rect: bounds)
+        if !selection.isEmpty { shade.appendRect(selection) }
+        shade.windingRule = .evenOdd
         NSColor.black.withAlphaComponent(0.38).setFill()
-        bounds.fill()
+        shade.fill()
         if !selection.isEmpty {
-            NSColor.clear.setFill()
-            selection.fill(using: .copy)
             let border = NSBezierPath(roundedRect: selection.insetBy(dx: -1, dy: -1), xRadius: mode == .window ? 10 : 2, yRadius: mode == .window ? 10 : 2)
             NSColor(calibratedRed: 0.62, green: 0.63, blue: 1, alpha: 1).setStroke()
             border.lineWidth = 2

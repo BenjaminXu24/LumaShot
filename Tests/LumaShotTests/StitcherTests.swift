@@ -94,6 +94,44 @@ final class StitcherTests: XCTestCase {
         assertPixelsEqual(try XCTUnwrap(stitcher.makeImage()), expected)
     }
 
+    @MainActor func testThreeTextScreensReachEditorAndExportAtFullHeight() throws {
+        let source = makeTextPage(width: 664, height: 2_400)
+        let viewport = 630
+        let first = try XCTUnwrap(source.cropping(to: CGRect(x: 0, y: 0, width: source.width, height: viewport)))
+        let stitcher = try XCTUnwrap(ImageStitcher(firstImage: first))
+        for offset in [280, 560] {
+            let next = try XCTUnwrap(source.cropping(to: CGRect(x: 0, y: offset, width: source.width, height: viewport)))
+            XCTAssertEqual(stitcher.append(next), .appended(addedPixels: 280, totalHeight: viewport + offset))
+        }
+        XCTAssertEqual(stitcher.frameCount, 3)
+        let output = try XCTUnwrap(stitcher.makeImage())
+        let expected = try XCTUnwrap(source.cropping(to: CGRect(x: 0, y: 0, width: source.width, height: 1_190)))
+        assertPixelsEqual(output, expected)
+        let editor = AnnotationEditorModel(image: NSImage(cgImage: output, size: NSSize(width: output.width, height: output.height)),
+                                           onCopy: { _ in }, onSave: { _ in })
+        XCTAssertEqual(editor.pixelSize, CGSize(width: 664, height: 1_190))
+        let rendered = try XCTUnwrap(editor.renderedImage())
+        assertPixelsEqual(try XCTUnwrap(ImageEncoding.bitmap(from: rendered)?.cgImage), expected)
+    }
+
+    private func makeTextPage(width: Int, height: Int) -> CGImage {
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        NSColor.white.setFill()
+        NSRect(x: 0, y: 0, width: width, height: height).fill()
+        for row in 0..<70 {
+            let text = "\(row + 1). 这是一段用于分享的回答。Capture paragraph \(row * 17): \(row * row)."
+            (text as NSString).draw(at: CGPoint(x: 24, y: height - 40 - row * 32), withAttributes: [
+                .font: NSFont.systemFont(ofSize: 17), .foregroundColor: NSColor.black
+            ])
+        }
+        return context.makeImage()!
+    }
+
     private func makePattern(width: Int, height: Int, seed: UInt32 = 1) -> CGImage {
         var pixels = [UInt8](repeating: 255, count: width * height * 4)
         for y in 0..<height {
