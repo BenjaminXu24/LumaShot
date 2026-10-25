@@ -102,6 +102,20 @@ final class ScrollCaptureDriver {
         onCaptureActivityChange(collecting)
     }
 
+    private func acceptCaptureResult(_ result: ImageStitcher.AppendResult?) -> Bool {
+        switch result {
+        case .none, .some(.noOverlap):
+            // A retryable failure revokes both queued Resume and Finish. Keep
+            // the controls open with the capture callback's recovery message.
+            intent = .paused
+            onAutomaticChange(false)
+            return false
+        default:
+            // Unchanged/height-limited captures can still save the valid image.
+            return true
+        }
+    }
+
     private func run() async {
         defer {
             worker = nil
@@ -113,8 +127,9 @@ final class ScrollCaptureDriver {
                 if manualFrameRequested {
                     manualFrameRequested = false
                     setCollectingFrame(true)
-                    _ = await capture()
+                    let result = await capture()
                     guard intent != .cancelled, !Task.isCancelled else { return }
+                    guard acceptCaptureResult(result) else { return }
                     setCollectingFrame(false)
                 }
                 if intent == .finishing {
@@ -143,6 +158,7 @@ final class ScrollCaptureDriver {
                 guard intent != .cancelled, !Task.isCancelled else { return }
                 let result = await capture()
                 guard intent != .cancelled, !Task.isCancelled else { return }
+                guard acceptCaptureResult(result) else { return }
                 setCollectingFrame(false)
                 if result == .unchanged { unchangedCount += 1 } else { unchangedCount = 0 }
                 if unchangedCount >= 2, intent == .automatic {

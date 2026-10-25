@@ -327,7 +327,7 @@ final class CaptureService: ObservableObject {
             return nil
         } catch {
             guard sessionID == id else { return nil }
-            stopAutomatic(status: "本屏捕获失败，已拼接 \(stitcher.frameCount) 屏仍保留。\(error.localizedDescription)")
+            stopAutomatic(status: "本屏捕获失败，请点击「添加当前屏」重试。已拼接 \(stitcher.frameCount) 屏仍保留。\(error.localizedDescription)")
             return nil
         }
     }

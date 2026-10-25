@@ -133,6 +133,86 @@ final class ScrollCaptureDriverTests: XCTestCase {
         XCTAssertEqual(fixture.finishCount, 0)
     }
 
+    @MainActor func testFinishAfterAutomaticCaptureFailureStaysOpenForRetry() async throws {
+        try await assertFailedFinalFrameCanRetry(.capture, manual: false)
+    }
+
+    @MainActor func testFinishAfterAutomaticNoOverlapStaysOpenForRetry() async throws {
+        try await assertFailedFinalFrameCanRetry(.noOverlap, manual: false)
+    }
+
+    @MainActor func testFinishAfterManualCaptureFailureStaysOpenForRetry() async throws {
+        try await assertFailedFinalFrameCanRetry(.capture, manual: true)
+    }
+
+    @MainActor func testFinishAfterManualNoOverlapStaysOpenForRetry() async throws {
+        try await assertFailedFinalFrameCanRetry(.noOverlap, manual: true)
+    }
+
+    @MainActor func testFinishWithUnchangedFrameStillExportsExistingImage() async throws {
+        let fixture = Fixture(holding: .stitching)
+        fixture.scrollAmount = 0
+        try await assertFinishExportsExistingImage(fixture)
+    }
+
+    @MainActor func testFinishAtHeightLimitStillExportsExistingImage() async throws {
+        let fixture = Fixture(holding: .stitching, maximumHeight: 800)
+        try await assertFinishExportsExistingImage(fixture)
+    }
+
+    private enum FrameFailure { case capture, noOverlap }
+
+    @MainActor private func assertFailedFinalFrameCanRetry(_ failure: FrameFailure, manual: Bool) async throws {
+        let fixture = Fixture(holding: failure == .capture ? .beforeSnapshot : .stitching,
+                              expectedCaptures: failure == .capture ? 1 : 2)
+        defer { fixture.close() }
+        fixture.failNextSnapshot = failure == .capture
+        fixture.scrollAmount = failure == .capture ? 302 : 604
+        if manual {
+            fixture.offset = fixture.scrollAmount
+            fixture.driver.addCurrentFrame()
+        } else {
+            fixture.driver.resume()
+        }
+        await fulfillment(of: [fixture.checkpoint.entered], timeout: 5)
+        fixture.driver.finish()
+        fixture.checkpoint.release()
+        await fulfillment(of: [fixture.failureDrained], timeout: 5)
+        XCTAssertFalse(fixture.driver.isFinishing)
+        XCTAssertFalse(fixture.driver.isAutomatic)
+        XCTAssertFalse(fixture.driver.isCollectingFrame)
+        XCTAssertEqual(fixture.stitcher.frameCount, 1)
+        XCTAssertEqual(fixture.stitcher.totalHeight, 630)
+        XCTAssertEqual(fixture.finishCount, 0)
+        XCTAssertNil(fixture.exported)
+        XCTAssertEqual(fixture.scrollCount, manual ? 0 : 1)
+
+        // Correct the overlap and retry. The failed Finish must not survive
+        // to silently export when this new manual append succeeds.
+        fixture.offset = 302
+        fixture.driver.addCurrentFrame()
+        await fulfillment(of: [fixture.captured], timeout: 5)
+        XCTAssertEqual(fixture.stitcher.frameCount, 2)
+        XCTAssertEqual(fixture.stitcher.totalHeight, 932)
+        XCTAssertEqual(fixture.finishCount, 0)
+        XCTAssertNil(fixture.exported)
+        fixture.driver.finish()
+        await fulfillment(of: [fixture.finished], timeout: 5)
+        XCTAssertEqual(fixture.finishCount, 1)
+        try fixture.assertExport(height: 932, frames: 2)
+    }
+
+    @MainActor private func assertFinishExportsExistingImage(_ fixture: Fixture) async throws {
+        defer { fixture.close() }
+        fixture.driver.resume()
+        await fulfillment(of: [fixture.checkpoint.entered], timeout: 5)
+        fixture.driver.finish()
+        fixture.checkpoint.release()
+        await fulfillment(of: [fixture.finished], timeout: 5)
+        XCTAssertEqual(fixture.finishCount, 1)
+        try fixture.assertExport(height: 630, frames: 1)
+    }
+
     @MainActor private func assertFinishCollectsLastFrame(holding stage: Fixture.Stage) async throws {
         let fixture = Fixture(holding: stage)
         defer { fixture.close() }
@@ -155,6 +235,7 @@ private final class Fixture {
     let captured = XCTestExpectation(description: "frames captured")
     let finished = XCTestExpectation(description: "full image exported")
     let endDetected = XCTestExpectation(description: "unchanged page paused")
+    let failureDrained = XCTestExpectation(description: "failed frame left controls available")
     private let holding: Stage?
     private var held = false
     private let source: CGImage
@@ -167,6 +248,8 @@ private final class Fixture {
     var finishAfterCaptures: Int?
     var finishCount = 0
     var exported: CGImage?
+    var failNextSnapshot = false
+    private var failedAttempt = false
 
     lazy var driver = ScrollCaptureDriver(
         prepare: { [unowned self] in preparedAfterFrames.append(stitcher.frameCount) },
@@ -178,7 +261,12 @@ private final class Fixture {
         },
         capture: { [unowned self] in await captureFrame() },
         onAutomaticChange: { _ in },
-        onCaptureActivityChange: { _ in },
+        onCaptureActivityChange: { [unowned self] active in
+            if !active, failedAttempt {
+                failedAttempt = false
+                failureDrained.fulfill()
+            }
+        },
         onFinish: { [unowned self] in
             exported = stitcher.makeImage()
             finishCount += 1
@@ -191,11 +279,12 @@ private final class Fixture {
         }
     )
 
-    init(holding: Stage? = nil, expectedCaptures: Int = 1) {
+    init(holding: Stage? = nil, expectedCaptures: Int = 1, maximumHeight: Int = 50_000) {
         self.holding = holding
         captured.expectedFulfillmentCount = expectedCaptures
         source = Self.makePattern(width: 160, height: 2_000)
-        stitcher = ImageStitcher(firstImage: source.cropping(to: CGRect(x: 0, y: 0, width: 160, height: 630))!)!
+        stitcher = ImageStitcher(firstImage: source.cropping(to: CGRect(x: 0, y: 0, width: 160, height: 630))!,
+                                 maximumHeight: maximumHeight)!
     }
 
     private func hold(at stage: Stage) async throws {
@@ -208,10 +297,16 @@ private final class Fixture {
         do {
             // Stands in for the production capture's cancellable UI-removal delay.
             try await hold(at: .beforeSnapshot)
+            if failNextSnapshot {
+                failNextSnapshot = false
+                failedAttempt = true
+                return nil
+            }
             let image = source.cropping(to: CGRect(x: 0, y: offset, width: 160, height: 630))!
             snapshots.append(offset)
             try await hold(at: .stitching)
             let result = stitcher.append(image)
+            failedAttempt = result == .noOverlap
             captured.fulfill()
             if snapshots.count == finishAfterCaptures { driver.finish() }
             return result
