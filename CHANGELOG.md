@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## [0.2.1](https://github.com/BenjaminXu24/LumaShot/releases/tag/v0.2.1) - 2026-10-25
+
+### Fixed
+
+- Fixed macOS scrolling capture: scrolling, frame stitching, and control bar interaction ([#7](https://github.com/BenjaminXu24/LumaShot/pull/7)).
+
+### Changed
+
+- Mac marketing version is 0.2.1 (`CFBundleShortVersionString`); the build number (`CFBundleVersion`) is 3. The notarized archive name is `LumaShot-v0.2.1-macOS-universal-notarized.zip`.
+
+## [0.2.0](https://github.com/BenjaminXu24/LumaShot/releases/tag/v0.2.0) - 2026-10-25
+
 ### Added
 
 - Mac OCR results can be translated in place. DeepSeek (`deepseek-flash`, online) is the default engine; Apple Translation on macOS 15 and later is an optional on-device engine. Languages are Chinese, English, and Filipino. The DeepSeek API key is stored in the macOS Keychain. The first online translation asks for consent. Images are not uploaded and translations are not cached. Windows translation is not included.
