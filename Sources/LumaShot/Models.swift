@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 enum AppVersion {
-    static let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.1"
+    static let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.2"
 }
 
 enum CaptureMode: String, CaseIterable, Codable, Identifiable {

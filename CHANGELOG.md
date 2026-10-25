@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## [0.2.2](https://github.com/BenjaminXu24/LumaShot/releases/tag/v0.2.2) - 2026-10-25
+
+### Fixed
+
+- Fixed macOS scrolling capture pause/resume and the last frame being dropped when finishing a capture ([#8](https://github.com/BenjaminXu24/LumaShot/pull/8)).
+
+### Changed
+
+- Mac marketing version is 0.2.2 (`CFBundleShortVersionString`); the build number (`CFBundleVersion`) is 4. The notarized archive name is `LumaShot-v0.2.2-macOS-universal-notarized.zip`.
+
 ## [0.2.1](https://github.com/BenjaminXu24/LumaShot/releases/tag/v0.2.1) - 2026-10-25
 
 ### Fixed
