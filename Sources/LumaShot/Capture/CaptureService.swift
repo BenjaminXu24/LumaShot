@@ -25,10 +25,11 @@ final class CaptureService: ObservableObject {
     private var scrollContent: SCShareableContent?
     private var scrollTargetPID: pid_t?
     private var stitcher: ImageStitcher?
-    private var originalMousePosition: CGPoint?
     private var escapeMonitor: Any?
     private var localKeyMonitor: Any?
     private var frameCaptureInProgress = false
+    private var scrollGestureInProgress = false
+    private var finishWhenReady = false
 
     func capture(_ mode: CaptureMode) {
         guard !isBusy else { return }
@@ -94,9 +95,6 @@ final class CaptureService: ObservableObject {
 
     private func captureImage(content: SCShareableContent, screen: NSScreen, rect: CGRect,
                               window: SCWindow? = nil) async throws -> CGImage {
-        // Scroll controls are created after the initial shareable-content query.
-        // Refresh the application list so their process is always excluded.
-        let content = controls == nil ? content : try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         let filter: SCContentFilter
         let config = SCStreamConfiguration()
         let scale = screen.backingScaleFactor
@@ -110,8 +108,14 @@ final class CaptureService: ObservableObject {
                   let display = content.displays.first(where: { $0.displayID == number.uint32Value }) else {
                 throw CaptureFailure.message("所选显示器已断开，请重新选择截图区域。")
             }
-            let ownApps = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
-            filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
+            if scrollSelection != nil {
+                // Scroll UI is ordered out before sampling; no application-list
+                // refresh or opaque exclusion mask is needed between frames.
+                filter = SCContentFilter(display: display, excludingWindows: [])
+            } else {
+                let ownApps = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
+                filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
+            }
             let primaryHeight = NSScreen.screens.first?.frame.height ?? screen.frame.height
             let quartzRect = CGRect(x: rect.minX, y: primaryHeight - rect.maxY, width: rect.width, height: rect.height)
             config.sourceRect = quartzRect.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
@@ -204,40 +208,88 @@ final class CaptureService: ObservableObject {
     }
 
     private func startAutomatic() {
-        guard let controls, let selection = scrollSelection, !controls.state.automatic else { return }
+        guard let controls, let selection = scrollSelection, !controls.state.automatic,
+              !frameCaptureInProgress, !scrollGestureInProgress else { return }
+        guard let pid = scrollTargetPID else {
+            controls.state.status = "未找到可滚动的目标窗口，请重新框选正文，或手动滚动后添加"
+            return
+        }
         controls.state.automatic = true
         controls.state.status = "正在自动向下滚动… 到底部后会自动暂停"
         // Returning from the Accessibility settings pane must bring the original
         // scroll surface back before synthetic wheel events are sent.
-        if let pid = scrollTargetPID {
-            NSRunningApplication(processIdentifier: pid)?.activate(options: [])
+        NSRunningApplication(processIdentifier: pid)?.activate(options: [])
+        controls.focus()
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? selection.screen.frame.height
+        if let pointer = CGEvent(source: nil)?.location {
+            let cocoaPointer = CGPoint(x: pointer.x, y: primaryHeight - pointer.y)
+            // Position once when explicitly starting from the controls. Never
+            // pull the cursor back during the loop: leaving the area pauses.
+            if !controls.allowsScrolling(at: cocoaPointer, in: selection.rect),
+               let target = controls.scrollPoint(in: selection.rect) {
+                let point = CGPoint(x: target.x, y: primaryHeight - target.y)
+                CGWarpMouseCursorPosition(point)
+                CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                        mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+            }
         }
         if escapeMonitor == nil {
             escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 if event.keyCode == 53 { Task { @MainActor in self?.cancel() } }
             }
         }
-        if originalMousePosition == nil { originalMousePosition = CGEvent(source: nil)?.location }
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? selection.screen.frame.height
-        let point = CGPoint(x: selection.rect.midX, y: primaryHeight - selection.rect.midY)
-        CGWarpMouseCursorPosition(point)
         let id = sessionID
         automaticTask = Task { [weak self] in
             var unchangedCount = 0
             do {
                 try await Task.sleep(for: .milliseconds(500))
                 while let self, self.sessionID == id, self.controls?.state.automatic == true, !Task.isCancelled {
+                    guard AXIsProcessTrusted() else {
+                        self.controls?.state.accessibilityGranted = false
+                        self.stopAutomatic(status: "自动滚动需要辅助功能权限。请开启权限，或手动滚动后添加当前屏")
+                        return
+                    }
+                    try Task.checkCancellation()
+                    guard self.sessionID == id,
+                          let point = CGEvent(source: nil)?.location else { return }
+                    let cocoaPoint = CGPoint(x: point.x, y: primaryHeight - point.y)
+                    guard self.controls?.allowsScrolling(at: cocoaPoint, in: selection.rect) == true else {
+                        self.stopAutomatic(status: "已暂停：鼠标已移出滚动区域。可添加当前屏、完成，或点击自动滚动继续")
+                        return
+                    }
                     let amount = Int32(max(40, min(selection.rect.height * 0.48, 700)))
-                    let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -amount, wheel2: 0, wheel3: 0)
-                    event?.location = point
-                    event?.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
-                    event?.post(tap: .cghidEventTap)
+                    guard let events = ScrollInput.events(at: point, pixels: amount) else {
+                        self.stopAutomatic(status: "无法发送滚动操作。请手动滚动后添加当前屏")
+                        return
+                    }
+                    self.scrollGestureInProgress = true
+                    self.controls?.state.capturing = true
+                    do {
+                        for event in events {
+                            try Task.checkCancellation()
+                            event.post(tap: .cghidEventTap)
+                            try await Task.sleep(for: .milliseconds(25))
+                        }
+                    } catch {
+                        events.last?.post(tap: .cghidEventTap)
+                        if self.sessionID == id {
+                            self.scrollGestureInProgress = false
+                            self.controls?.state.capturing = false
+                            self.completePendingFinish()
+                        }
+                        throw error
+                    }
+                    self.scrollGestureInProgress = false
+                    self.controls?.state.capturing = false
                     try await Task.sleep(for: .milliseconds(680))
                     guard self.sessionID == id, !Task.isCancelled else { return }
                     let result = await self.addScrollFrame(automatic: true)
+                    guard self.sessionID == id, !Task.isCancelled else { return }
                     if result == .unchanged { unchangedCount += 1 } else { unchangedCount = 0 }
                     if unchangedCount >= 2 {
-                        self.stopAutomatic(status: "页面已停止滚动。点击「完成」进入标注")
+                        self.stopAutomatic(status: self.stitcher?.frameCount == 1
+                            ? "未检测到页面滚动，本次仍只有 1 屏。请将选区放在回答正文，或手动滚动后添加"
+                            : "页面已停止滚动。已拼接 \(self.stitcher?.frameCount ?? 1) 屏，点击「完成」进入标注")
                         return
                     }
                     try await Task.sleep(for: .milliseconds(220))
@@ -249,34 +301,48 @@ final class CaptureService: ObservableObject {
     @discardableResult
     private func addScrollFrame(automatic: Bool) async -> ImageStitcher.AppendResult? {
         guard let selection = scrollSelection, let content = scrollContent,
-              let stitcher, let controls, !frameCaptureInProgress else { return nil }
+              let stitcher, let controls, !frameCaptureInProgress, !scrollGestureInProgress else { return nil }
         frameCaptureInProgress = true
         controls.state.capturing = true
         let id = sessionID
+        controls.hideForCapture(in: selection.rect)
         defer {
-            frameCaptureInProgress = false
             controls.state.capturing = false
+            if sessionID == id {
+                frameCaptureInProgress = false
+                controls.restoreAfterCapture()
+                completePendingFinish()
+            }
         }
         do {
+            try await Task.sleep(for: .milliseconds(120))
+            guard sessionID == id, !Task.isCancelled else { return nil }
             let image = try await captureImage(content: content, screen: selection.screen, rect: selection.rect)
             guard sessionID == id else { return nil }
-            let result = stitcher.append(image)
+            controls.restoreAfterCapture()
+            // The frame gate serializes mutation; Finish waits for this task.
+            // Keep matching off the UI thread so Pause and Cancel stay usable.
+            let result = await Task.detached(priority: .userInitiated) { stitcher.append(image) }.value
+            guard sessionID == id else { return nil }
+            let continuingAutomatically = automatic && controls.state.automatic
             switch result {
             case .appended(_, let height):
                 controls.state.frames = stitcher.frameCount
                 controls.state.height = height
-                controls.state.status = automatic ? "已拼接 \(stitcher.frameCount) 屏，正在继续滚动…" : "已添加。继续向下滚动约半屏，或点击完成"
+                controls.state.status = continuingAutomatically ? "已拼接 \(stitcher.frameCount) 屏，正在继续滚动…" : "已成功拼接 \(stitcher.frameCount) 屏（\(height) px）。继续向下滚动约半屏，或点击完成"
             case .unchanged:
-                controls.state.status = automatic ? "正在确认页面是否已到底…" : "画面未变化，请先向下滚动约半屏再添加"
+                controls.state.status = continuingAutomatically ? "正在确认页面是否已到底…" : "本屏未添加：画面未变化。请先在回答正文向下滚动约半屏再添加"
             case .noOverlap:
-                stopAutomatic(status: "未找到重叠区域：请向上回滚一点，再点击「添加当前屏」")
+                stopAutomatic(status: "本屏未添加：未找到重叠区域。请向上回滚一点，保留约半屏原内容后再添加")
             case .heightLimit:
                 stopAutomatic(status: "已达到 \(stitcher.maximumHeight) 像素上限，点击「完成」保存当前长图")
             }
             return result
+        } catch is CancellationError {
+            return nil
         } catch {
             guard sessionID == id else { return nil }
-            stopAutomatic(status: "捕获失败，请重试添加；已拼接的画面仍保留")
+            stopAutomatic(status: "本屏捕获失败，已拼接 \(stitcher.frameCount) 屏仍保留。\(error.localizedDescription)")
             return nil
         }
     }
@@ -289,12 +355,22 @@ final class CaptureService: ObservableObject {
     }
 
     private func finishScrolling() {
-        guard !frameCaptureInProgress else { return }
+        stopAutomatic(status: "正在合成长图…")
+        guard !frameCaptureInProgress, !scrollGestureInProgress else {
+            finishWhenReady = true
+            return
+        }
         guard let image = stitcher?.makeImage() else {
             stopAutomatic(status: "系统内存不足，无法合成长图。请取消并缩小截图区域后重试")
             return
         }
         finish(image: image, mode: .scroll)
+    }
+
+    private func completePendingFinish() {
+        guard finishWhenReady, !frameCaptureInProgress, !scrollGestureInProgress else { return }
+        finishWhenReady = false
+        finishScrolling()
     }
 
     private func finish(image: CGImage, mode: CaptureMode) {
@@ -322,12 +398,13 @@ final class CaptureService: ObservableObject {
         scrollContent = nil
         scrollTargetPID = nil
         stitcher = nil
+        frameCaptureInProgress = false
+        scrollGestureInProgress = false
+        finishWhenReady = false
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
         if let localKeyMonitor { NSEvent.removeMonitor(localKeyMonitor) }
         escapeMonitor = nil
         localKeyMonitor = nil
-        if let originalMousePosition { CGWarpMouseCursorPosition(originalMousePosition) }
-        originalMousePosition = nil
         hiddenWindows.forEach { $0.orderFront(nil) }
         hiddenWindows.removeAll()
         isBusy = false
