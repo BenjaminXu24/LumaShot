@@ -40,7 +40,7 @@ final class AppModel: ObservableObject {
         captureService.onCapture = { [weak self] image, mode in
             guard let self else { return }
             self.captureInProgress = false
-            self.restoreCaptureWindows()
+            self.restoreCaptureWindows(includingMainWindow: false)
             self.status = "截图完成 · \(image.pixelSizeDescription)"
             if self.store.add(image: image, mode: mode) == nil {
                 self.showToast("截图已打开，但历史记录保存失败，请检查磁盘空间")
@@ -94,8 +94,12 @@ final class AppModel: ObservableObject {
         showMainWindow()
     }
 
-    private func restoreCaptureWindows() {
-        hiddenForCapture.forEach { $0.orderFront(nil) }
+    private func restoreCaptureWindows(includingMainWindow: Bool = true) {
+        // A successful capture should reveal the editor, without leaving the
+        // dashboard behind it when the editor is closed.
+        for window in hiddenForCapture where includingMainWindow || window !== mainWindow {
+            window.orderFront(nil)
+        }
         hiddenForCapture.removeAll()
     }
 
