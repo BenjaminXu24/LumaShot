@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## [0.2.3](https://github.com/BenjaminXu24/LumaShot/releases/tag/v0.2.3) - 2026-10-27
+
+### Fixed
+
+- Kept the client main window hidden after a capture finishes ([#9](https://github.com/BenjaminXu24/LumaShot/pull/9)).
+
+### Changed
+
+- Mac marketing version is 0.2.3 (`CFBundleShortVersionString`); the build number (`CFBundleVersion`) is 5. The notarized archive name is `LumaShot-v0.2.3-macOS-universal-notarized.zip`.
+
 ## [0.2.2](https://github.com/BenjaminXu24/LumaShot/releases/tag/v0.2.2) - 2026-10-25
 
 ### Fixed
