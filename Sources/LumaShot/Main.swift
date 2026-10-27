@@ -48,7 +48,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { model.showMainWindow(); return true }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        model.handleReopen(hasVisibleWindows: flag)
+        // Our window routing handles this event; AppKit must not also reopen
+        // the dashboard when only a capture panel or editor is present.
+        return false
+    }
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {

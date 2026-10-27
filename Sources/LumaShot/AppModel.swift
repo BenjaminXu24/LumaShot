@@ -27,20 +27,22 @@ final class AppModel: ObservableObject {
 
     let store = CaptureStore()
     let captureService = CaptureService()
-    var mainWindow: NSWindow?
+    var mainWindow: NSWindow? {
+        didSet { windowLifecycle.mainWindow = mainWindow }
+    }
     private var editors: [EditorWindowController] = []
     private var hotkeys: GlobalHotKeyManager?
     private var toastTask: Task<Void, Never>?
     private var captureTask: Task<Void, Never>?
     private var statusTimer: Timer?
-    private var hiddenForCapture: [NSWindow] = []
+    private let windowLifecycle = CaptureWindowLifecycle()
 
     func start() {
         refreshPermissions()
         captureService.onCapture = { [weak self] image, mode in
             guard let self else { return }
             self.captureInProgress = false
-            self.restoreCaptureWindows()
+            self.restoreCaptureWindows(includingMainWindow: false)
             self.status = "截图完成 · \(image.pixelSizeDescription)"
             if self.store.add(image: image, mode: mode) == nil {
                 self.showToast("截图已打开，但历史记录保存失败，请检查磁盘空间")
@@ -77,8 +79,7 @@ final class AppModel: ObservableObject {
         captureTask = Task { @MainActor [weak self] in
             guard let self else { return }
             self.status = mode == .scroll ? "准备选择滚动区域" : "准备\(mode.title)"
-            self.hiddenForCapture = ([self.mainWindow] + self.editors.map(\.window)).compactMap { $0 }.filter(\.isVisible)
-            self.hiddenForCapture.forEach { $0.orderOut(nil) }
+            self.windowLifecycle.hideForCapture(editorWindows: self.editors.compactMap(\.window))
             let delay = UInt64(max(0, self.captureDelay)) * 1_000_000_000 + 250_000_000
             try? await Task.sleep(nanoseconds: delay)
             guard !Task.isCancelled else { self.captureInProgress = false; return }
@@ -94,9 +95,8 @@ final class AppModel: ObservableObject {
         showMainWindow()
     }
 
-    private func restoreCaptureWindows() {
-        hiddenForCapture.forEach { $0.orderFront(nil) }
-        hiddenForCapture.removeAll()
+    private func restoreCaptureWindows(includingMainWindow: Bool = true) {
+        windowLifecycle.restoreAfterCapture(includingMainWindow: includingMainWindow)
     }
 
     func openEditor(_ image: NSImage) {
@@ -114,8 +114,16 @@ final class AppModel: ObservableObject {
     }
 
     func showMainWindow() {
-        mainWindow?.makeKeyAndOrderFront(nil)
+        windowLifecycle.showMainWindow()
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func handleReopen(hasVisibleWindows: Bool) {
+        if windowLifecycle.handleReopen(captureInProgress: captureInProgress || captureService.isBusy,
+                                        hasVisibleWindows: hasVisibleWindows,
+                                        editorWindows: editors.compactMap(\.window)) {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     func importImage() {
